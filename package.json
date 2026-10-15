@@ -1,0 +1,33 @@
+{
+  "name": "dentaflow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "git": "^0.1.5",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.55.0",
+    "mariadb": "^3.5.4",
+    "next": "16.4.0",
+    "postcss": "^8.5.29",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tailwindcss": "^4.3.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.0",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --color-accent: #6c5ce7;
+  --color-accent-soft: #efecfd;
+  --color-ink: #172b4d;
+  --color-background: #f5f8fc;
+  --color-surface: #ffffff;
+  --color-success: #2fa77e;
+  --color-warning: #e89a2d;
+  --color-error: #df6674;
+  --color-canvas: #f5f8fc;
+  --color-line: #e7edf5;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-geist-sans), Arial, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+html[dir="rtl"] .md\:pl-64 {
+  padding-left: 0;
+  padding-right: 16rem;
+}
+
+html[dir="rtl"] aside {
+  left: auto;
+  right: 0;
+  border-left: 1px solid var(--color-line);
+  border-right: 0;
+}
+
+@media (max-width: 767px) {
+  html[dir="rtl"] .md\:pl-64 {
+    padding-right: 0;
+  }
+}

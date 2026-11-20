@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { SearchableInput } from "@/components/ui/SearchableInput";
+import { ToothPicker } from "@/components/ui/ToothPicker";
 import { useI18n } from "@/lib/i18n";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { PatientListItem } from "@/features/patients/types";
@@ -24,35 +26,59 @@ export function TreatmentsView() {
   const { locale, t } = useI18n();
   const [treatments, setTreatments] = useState<Treatment[]>([]);
   const [patients, setPatients] = useState<PatientListItem[]>([]);
+  const [practitionerOptions, setPractitionerOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [patientFilter, setPatientFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [message, setMessage] = useState("");
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({ patientId: "", phase: "Phase 1", treatment: "", teeth: "", amount: "", status: "À faire" as Treatment["status"], dentist: "Praticien", plannedDate: new Date().toISOString().slice(0, 10) });
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [treatmentResponse, patientResponse] = await Promise.all([fetch("/api/treatments", { cache: "no-store" }), fetch("/api/patients", { cache: "no-store" })]);
-      const treatmentBody = await treatmentResponse.json();
-      const patientBody = await patientResponse.json();
-      if (!treatmentResponse.ok || !patientResponse.ok) throw new Error(treatmentBody.error ?? patientBody.error ?? "Chargement impossible.");
+      const [treatmentResponse, patientResponse, practitionerResponse] = await Promise.all([
+        fetch("/api/treatments", { cache: "no-store" }),
+        fetch("/api/patients", { cache: "no-store" }),
+        fetch("/api/practitioners", { cache: "no-store" }),
+      ]);
+      const [treatmentBody, patientBody, practitionerBody] = await Promise.all([
+        treatmentResponse.json(),
+        patientResponse.json(),
+        practitionerResponse.json(),
+      ]);
+      if (!treatmentResponse.ok || !patientResponse.ok || !practitionerResponse.ok) {
+        throw new Error(treatmentBody.error ?? patientBody.error ?? practitionerBody.error ?? "Chargement impossible.");
+      }
       setTreatments(treatmentBody.data);
       setPatients(patientBody.data);
+      setPractitionerOptions([...new Set((practitionerBody.data as Array<{ name: string }>).map((item) => item.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr")));
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Chargement impossible.");
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
-  const filtered = treatments.filter((item) => (!patientFilter || String(item.patientId) === patientFilter) && (!statusFilter || item.status === statusFilter));
-  const phases = [...new Set(filtered.map((item) => item.phase))];
+  const filtered = useMemo(
+    () => treatments.filter((item) => (!patientFilter || String(item.patientId) === patientFilter) && (!statusFilter || item.status === statusFilter)),
+    [patientFilter, statusFilter, treatments],
+  );
+  const phases = useMemo(() => [...new Set(filtered.map((item) => item.phase))], [filtered]);
+  const treatmentOptions = useMemo(
+    () => [...new Set(treatments.map((item) => item.treatment).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr")),
+    [treatments],
+  );
   const completed = treatments.filter((item) => item.status === "Terminé").length;
   const inProgress = treatments.filter((item) => item.status === "En cours").length;
   const plannedAmount = treatments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -79,12 +105,153 @@ export function TreatmentsView() {
 
   const label = (fr: string, ar: string) => locale === "ar" ? ar : fr;
 
+  function parseCsv(content: string): Record<string, string>[] {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let cell = "";
+    let quoted = false;
+    const delimiter = content.includes(";") ? ";" : ",";
+
+    for (let index = 0; index < content.length; index += 1) {
+      const character = content[index];
+      const next = content[index + 1];
+      if (character === '"' && quoted && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = !quoted;
+      } else if (character === delimiter && !quoted) {
+        row.push(cell.trim());
+        cell = "";
+      } else if ((character === "\n" || character === "\r") && !quoted) {
+        if (character === "\r" && next === "\n") index += 1;
+        row.push(cell.trim());
+        if (row.some(Boolean)) rows.push(row);
+        row = [];
+        cell = "";
+      } else {
+        cell += character;
+      }
+    }
+
+    if (quoted) throw new Error(label("Le fichier CSV contient un guillemet non fermé.", "يحتوي ملف CSV على علامة اقتباس غير مغلقة."));
+    if (cell || row.length) {
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+    }
+    const headers = rows.shift()?.map((header, index) =>
+      (index === 0 ? header.replace(/^\uFEFF/, "") : header).trim().toLowerCase(),
+    ) ?? [];
+    return rows.map((values) =>
+      Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])),
+    );
+  }
+
+  function exportCsv() {
+    const headers = ["patientNumber", "phase", "treatment", "teeth", "amount", "status", "dentist", "plannedDate"];
+    const escapeCsv = (value: string | number) => {
+      let text = String(value ?? "");
+      if (/^[=+\-@]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const rows = filtered.map((item) => [
+      item.patientNumber,
+      item.phase,
+      item.treatment,
+      item.teeth ?? "",
+      item.amount,
+      item.status,
+      item.dentist,
+      item.plannedDate,
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(";")).join("\r\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `traitements-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importCsv(file?: File) {
+    if (!file) return;
+    setImporting(true);
+    setError("");
+    setMessage("");
+    try {
+      const rows = parseCsv(await file.text());
+      if (!rows.length) throw new Error(label("Le fichier CSV est vide.", "ملف CSV فارغ."));
+
+      let imported = 0;
+      const errors: string[] = [];
+      for (const [index, row] of rows.entries()) {
+        try {
+          const patientNumber = row.patientnumber ?? "";
+          const patientId = row.patientid;
+          const patient = patientId
+            ? patients.find((item) => String(item.id) === String(patientId))
+            : patients.find((item) => item.patientNumber === patientNumber);
+          const phase = row.phase;
+          const treatment = row.treatment;
+          const amount = Number(String(row.amount ?? "").replace(",", "."));
+          const status = row.status as Treatment["status"];
+          const dentist = row.dentist;
+          const plannedDate = row.planneddate ?? row.date;
+
+          if (!patient) throw new Error(label("Patient introuvable.", "المريض غير موجود."));
+          if (!phase || !treatment || !dentist || !plannedDate || !/^\d{4}-\d{2}-\d{2}$/.test(plannedDate)) {
+            throw new Error(label("Données obligatoires invalides.", "بيانات إلزامية غير صالحة."));
+          }
+          if (!Number.isFinite(amount) || amount < 0) throw new Error(label("Montant invalide.", "المبلغ غير صالح."));
+          if (!["À faire", "En cours", "Terminé"].includes(status)) {
+            throw new Error(label("Statut invalide.", "الحالة غير صالحة."));
+          }
+
+          const response = await fetch(`/api/patients/${patient.id}/treatments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              phase,
+              treatment,
+              teeth: row.teeth ?? "",
+              amount,
+              status,
+              dentist,
+              plannedDate,
+            }),
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error ?? label("Import impossible.", "تعذر الاستيراد."));
+          imported += 1;
+        } catch (reason) {
+          errors.push(label(`Ligne ${index + 2} : ${reason instanceof Error ? reason.message : "données invalides"}`, `السطر ${index + 2}: ${reason instanceof Error ? reason.message : "بيانات غير صالحة"}`));
+        }
+      }
+
+      await load();
+      setMessage(errors.length
+        ? label(`${imported} traitement(s) importé(s). ${errors.join(" ")}`, `تم استيراد ${imported} علاج. ${errors.join(" ")}`)
+        : label(`${imported} traitement(s) importé(s) avec succès.`, `تم استيراد ${imported} علاج بنجاح.`));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : label("Import CSV impossible.", "تعذر استيراد CSV."));
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+      setImporting(false);
+    }
+  }
+
   return <div className="space-y-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="text-2xl font-bold tracking-tight text-ink">{label("Traitements", "العلاجات")}</h1><p className="mt-1 text-sm text-slate-500">{label("Plans de traitement par patient, par phase et par dent.", "خطط العلاج حسب المريض والمرحلة والسن.")}</p></div>
-      <div className="flex gap-2"><Button><Icon name="upload" size={15} /> {label("Importer", "استيراد")}</Button><Button><Icon name="download" size={15} /> CSV</Button><Button variant="primary" onClick={() => setModalOpen(true)}><Icon name="plus" size={15} /> {label("Ajouter un acte", "إضافة علاج")}</Button></div>
+      <div className="flex gap-2">
+        <input ref={importInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => void importCsv(event.target.files?.[0])} />
+        <Button onClick={() => importInputRef.current?.click()} disabled={importing || loading}><Icon name="upload" size={15} /> {importing ? label("Importation…", "جار الاستيراد...") : label("Importer", "استيراد")}</Button>
+        <Button onClick={exportCsv} disabled={loading || filtered.length === 0}><Icon name="download" size={15} /> CSV</Button>
+        <Button variant="primary" onClick={() => setModalOpen(true)}><Icon name="plus" size={15} /> {label("Ajouter un acte", "إضافة علاج")}</Button>
+      </div>
     </div>
     {error && <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>}
+    {message && <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</p>}
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <Metric icon="activity" label={label("Actes au programme", "العلاجات المبرمجة")} value={String(treatments.length)} detail={label("Tous les patients", "كل المرضى")} tone="violet" />
       <Metric icon="check" label={label("Actes terminés", "العلاجات المكتملة")} value={String(completed)} detail={`${progress}% ${label("de progression", "من التقدم")}`} tone="green" />
@@ -96,7 +263,7 @@ export function TreatmentsView() {
       <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-5"><div><h2 className="font-bold text-ink">{label("Plan de traitement", "خطة العلاج")}</h2><p className="mt-1 text-xs text-slate-400">{label("Par patient · statut · praticien", "حسب المريض · الحالة · الممارس")}</p></div><div className="flex gap-2"><select value={patientFilter} onChange={(event) => setPatientFilter(event.target.value)} className="rounded-lg border border-line px-3 py-2 text-xs"><option value="">{label("Tous les patients", "كل المرضى")}</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>)}</select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-line px-3 py-2 text-xs"><option value="">{label("Tous les statuts", "كل الحالات")}</option>{["À faire", "En cours", "Terminé"].map((status) => <option key={status}>{status}</option>)}</select></div></div>{loading ? <p className="p-8 text-center text-sm text-slate-400">{t("common.loading")}</p> : filtered.length === 0 ? <p className="p-8 text-center text-sm text-slate-400">{label("Aucun traitement enregistré.", "لا توجد علاجات مسجلة.")}</p> : <div>{phases.map((phase) => <div key={phase}><div className="flex justify-between border-b border-line bg-slate-50 px-5 py-3 text-xs font-semibold text-ink"><span>{phase}</span><span className="text-slate-400">{filtered.filter((item) => item.phase === phase).length} acte(s)</span></div>{filtered.filter((item) => item.phase === phase).map((item) => <div key={item.id} className="grid items-center gap-3 border-b border-line px-5 py-4 text-xs md:grid-cols-[minmax(180px,1.5fr)_70px_100px_80px_100px]"><div><p className="font-semibold text-ink">{item.treatment}</p><p className="mt-1 text-[10px] text-slate-400">{item.patientName} · {item.dentist}</p></div><span className="text-slate-500">{item.teeth || "—"}</span><span className={`rounded-full px-2 py-1 text-center font-semibold ${statusStyles[item.status]}`}>{item.status}</span><span className="font-semibold text-slate-600">{formatMoney(Number(item.amount))}</span><span className="text-slate-500">{formatDate(item.plannedDate, undefined, locale)}</span></div>)}</div>)}</div>}</section>
       <section className="rounded-2xl border border-line bg-white p-5 shadow-sm"><h2 className="font-bold text-ink">{label("Phases types", "مراحل العلاج")}</h2><p className="mt-1 text-xs text-slate-400">{label("Progression des soins", "تقدم الرعاية")}</p><div className="mt-5 space-y-3">{phaseCounts.map((item, index) => <div key={item.phase} className="flex items-center gap-3 border-b border-line pb-3"><span className="grid h-6 w-6 place-items-center rounded-md bg-accent/10 text-[10px] font-bold text-accent">{String(index + 1).padStart(2, "0")}</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-ink">{item.phase}</p><p className="mt-1 text-[10px] text-slate-400">{item.count} acte(s)</p></div></div>)}{phaseCounts.length === 0 && <p className="py-6 text-sm text-slate-400">{label("Aucune phase.", "لا توجد مراحل.")}</p>}</div><p className="mt-5 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">{label("Les plans et tarifs sont établis et validés par le praticien.", "يتم إعداد الخطط والتعريفات واعتمادها من قبل الممارس.")}</p></section>
     </div>
-    {modalOpen && <Modal title={label("Ajouter un acte", "إضافة علاج")} onClose={() => setModalOpen(false)}><form onSubmit={saveTreatment} className="space-y-4"><Field label={label("Patient", "المريض")}><select required value={form.patientId} onChange={(event) => setForm({ ...form, patientId: event.target.value })} className="input"><option value="">{label("Sélectionner", "اختر")}</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>)}</select></Field><div className="grid gap-3 sm:grid-cols-2"><Field label={label("Phase", "المرحلة")}><input className="input" value={form.phase} onChange={(event) => setForm({ ...form, phase: event.target.value })} /></Field><Field label={label("Acte / traitement", "العلاج")}><input required className="input" value={form.treatment} onChange={(event) => setForm({ ...form, treatment: event.target.value })} /></Field><Field label={label("Dent(s)", "السن")}><input className="input" value={form.teeth} onChange={(event) => setForm({ ...form, teeth: event.target.value })} /></Field><Field label={label("Montant", "المبلغ")}><input type="number" min="0" step="0.001" className="input" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></Field><Field label={label("Statut", "الحالة")}><select className="input" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as Treatment["status"] })}>{["À faire", "En cours", "Terminé"].map((status) => <option key={status}>{status}</option>)}</select></Field><Field label={label("Date prévue", "التاريخ المتوقع")}><input type="date" className="input" value={form.plannedDate} onChange={(event) => setForm({ ...form, plannedDate: event.target.value })} /></Field></div><Field label={label("Praticien", "الممارس")}><input className="input" value={form.dentist} onChange={(event) => setForm({ ...form, dentist: event.target.value })} /></Field><div className="flex justify-end gap-2"><Button type="button" onClick={() => setModalOpen(false)}>{t("common.cancel")}</Button><Button type="submit" variant="primary" disabled={saving}>{saving ? t("form.saving") : t("common.save")}</Button></div></form></Modal>}
+    {modalOpen && <Modal title={label("Ajouter un acte", "إضافة علاج")} onClose={() => setModalOpen(false)}><form onSubmit={saveTreatment} className="space-y-4"><Field label={label("Patient", "المريض")}><select required value={form.patientId} onChange={(event) => setForm({ ...form, patientId: event.target.value })} className="input"><option value="">{label("Sélectionner", "اختر")}</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.firstName} {patient.lastName}</option>)}</select></Field><div className="grid gap-3 sm:grid-cols-2"><Field label={label("Phase", "المرحلة")}><input required maxLength={80} className="input" value={form.phase} onChange={(event) => setForm({ ...form, phase: event.target.value })} /></Field><Field label={label("Acte / traitement", "العلاج")}><SearchableInput required className="input" value={form.treatment} onChange={(treatment) => setForm((current) => ({ ...current, treatment }))} options={treatmentOptions} placeholder={label("Rechercher ou saisir un acte", "ابحث أو أدخل علاجاً")} /></Field><Field label={label("Dent(s)", "السن")}><ToothPicker value={form.teeth} onChange={(teeth) => setForm((current) => ({ ...current, teeth }))} /></Field><Field label={label("Montant", "المبلغ")}><input required type="number" min="0" step="0.001" className="input" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></Field><Field label={label("Statut", "الحالة")}><select className="input" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as Treatment["status"] })}>{["À faire", "En cours", "Terminé"].map((status) => <option key={status}>{status}</option>)}</select></Field><Field label={label("Date prévue", "التاريخ المتوقع")}><input required type="date" className="input" value={form.plannedDate} onChange={(event) => setForm({ ...form, plannedDate: event.target.value })} /></Field></div><Field label={label("Praticien", "الممارس")}><SearchableInput required className="input" value={form.dentist} onChange={(dentist) => setForm((current) => ({ ...current, dentist }))} options={practitionerOptions} placeholder={label("Rechercher ou saisir un praticien", "ابحث عن الممارس")} /></Field><div className="flex justify-end gap-2"><Button type="button" onClick={() => setModalOpen(false)}>{t("common.cancel")}</Button><Button type="submit" variant="primary" disabled={saving}>{saving ? t("form.saving") : t("common.save")}</Button></div></form></Modal>}
   </div>;
 }
 

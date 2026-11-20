@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { Icon } from "@/components/ui/Icon";
 import { NAV_GROUPS } from "./nav";
+import { NotificationCategory, notificationTitle, useNotifications } from "@/features/notifications/useNotifications";
 
 type Props = { userName: string; role: string; onMenuClick: () => void };
 type PatientSearchResult = {
@@ -14,6 +15,11 @@ type PatientSearchResult = {
   firstName: string;
   lastName: string;
   phone: string;
+};
+const notificationCategoryCopy: Record<NotificationCategory, { fr: string; ar: string; icon: string }> = {
+  agenda: { fr: "Agenda", ar: "المواعيد", icon: "calendar" },
+  stock: { fr: "Stock", ar: "المخزون", icon: "package" },
+  laboratory: { fr: "Laboratoire", ar: "المخبر", icon: "flask" },
 };
 
 function initials(name: string) {
@@ -29,14 +35,17 @@ export function Topbar({ userName, role, onMenuClick }: Props) {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { locale, setLocale, t } = useI18n();
   const profileRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const { notifications, loading: notificationsLoading, error: notificationsError, markRead, unreadCount } = useNotifications();
   // Les entrées du sidebar sont la source unique des routes et de leurs traductions.
   // Le tri par longueur garantit que les sous-routes comme /patients/12 utilisent
   // le libellé « Patients » plutôt qu'une correspondance plus générale.
   const navItems = NAV_GROUPS.flatMap((group) => group.items).sort((a, b) => b.href.length - a.href.length);
-  const currentNavItem = navItems.find((item) => item.href !== "/" && pathname.startsWith(item.href));
+  const currentNavItem = navItems.find((item) => item.href === "/" ? pathname === "/" : pathname.startsWith(item.href));
   const pageLabel = currentNavItem ? t(`nav.${currentNavItem.label}`) : t("page.overview");
 
   useEffect(() => {
@@ -44,6 +53,7 @@ export function Topbar({ userName, role, onMenuClick }: Props) {
       const target = event.target as Node;
       if (!profileRef.current?.contains(target)) setProfileOpen(false);
       if (!searchRef.current?.contains(target)) setSearchOpen(false);
+      if (!notificationsRef.current?.contains(target)) setNotificationsOpen(false);
     }
     document.addEventListener("mousedown", closeMenus);
     return () => document.removeEventListener("mousedown", closeMenus);
@@ -99,15 +109,15 @@ export function Topbar({ userName, role, onMenuClick }: Props) {
         <Icon name="menu" size={20} />
       </button>
 
-      <div className="hidden items-center gap-2 text-xs text-slate-400 md:flex">
-        <Link href="/" className="hover:text-accent">DentaFlow</Link>
+      <div className="hidden shrink-0 items-center gap-2 text-xs text-slate-400 md:flex">
+        <Link href="/" className="hover:text-accent">DentaClinic</Link>
         <Icon name="chevronRight" size={14} />
         <span className="font-semibold text-ink">{pageLabel}</span>
       </div>
 
-      <div ref={searchRef} className="relative hidden w-full max-w-sm md:block">
+      <div ref={searchRef} className="relative hidden min-w-0 max-w-sm flex-1 lg:block">
         <form onSubmit={submitSearch} className="relative">
-          <Icon name="search" size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Icon name="search" size={16} className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
             onFocus={() => { if (search.trim()) setSearchOpen(true); }}
@@ -117,7 +127,7 @@ export function Topbar({ userName, role, onMenuClick }: Props) {
             }}
             placeholder={t("topbar.search")}
             aria-label={t("topbar.searchLabel")}
-            className="w-full rounded-lg border border-line bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none transition focus:border-accent focus:bg-white"
+            className="topbar-search-input search-with-icon w-full rounded-xl border border-line bg-slate-50 py-2 ps-11 pe-3 text-xs outline-none transition focus:border-accent focus:bg-white"
           />
         </form>
         {searchOpen && (
@@ -148,13 +158,36 @@ export function Topbar({ userName, role, onMenuClick }: Props) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button type="button" aria-label={t("topbar.notifications")} className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100">
-          <Icon name="bell" size={16} />
-          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
-        </button>
+        <div className="relative" ref={notificationsRef}>
+          <button type="button" aria-label={t("topbar.notifications")} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)} className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+            <Icon name="bell" size={16} />
+            {unreadCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-4 text-white">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+          </button>
+          {notificationsOpen && <div className="absolute right-0 top-11 z-40 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-line bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-line px-4 py-3">
+              <div><p className="text-sm font-semibold text-ink">{locale === "ar" ? "الإشعارات" : "Notifications"}</p><p className="text-[11px] text-slate-500">{locale === "ar" ? `${unreadCount} غير مقروء` : `${unreadCount} non lue(s)`}</p></div>
+              {unreadCount > 0 && <button type="button" onClick={() => void markRead(notifications.filter((item) => !item.read).map((item) => item.key))} className="text-[11px] font-semibold text-accent">{locale === "ar" ? "تحديد الكل كمقروء" : "Tout lire"}</button>}
+            </div>
+            {notificationsError && <p role="alert" className="px-4 py-3 text-xs text-rose-600">{notificationsError}</p>}
+            {notificationsLoading && notifications.length === 0 ? <p className="px-4 py-6 text-center text-xs text-slate-500">{t("common.loading")}</p>
+              : notifications.length === 0 ? <p className="px-4 py-6 text-center text-xs text-slate-500">{locale === "ar" ? "لا توجد إشعارات نشطة." : "Aucune notification active."}</p>
+                : <ul className="max-h-96 overflow-y-auto">
+                  {notifications.slice(0, 10).map((item) => {
+                    const category = notificationCategoryCopy[item.category];
+                    return <li key={item.key}>
+                      <Link href={item.href} onClick={async (event) => { if (!await markRead([item.key])) event.preventDefault(); else setNotificationsOpen(false); }} className={`flex gap-3 border-b border-line px-4 py-3 hover:bg-slate-50 ${item.read ? "" : "bg-violet-50/40"}`}>
+                        <Icon name={category.icon} size={16} className="mt-0.5 shrink-0 text-accent" />
+                        <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5 text-xs font-semibold text-ink">{notificationTitle(item, locale)}{!item.read && <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />}</span><span className="mt-1 block truncate text-[11px] text-slate-600">{item.description}</span><span className="mt-1 block truncate text-[10px] text-slate-400">{category[locale]}{item.context ? ` · ${item.context}` : ""}</span></span>
+                      </Link>
+                    </li>;
+                  })}
+                </ul>}
+            <Link href="/notifications" onClick={() => setNotificationsOpen(false)} className="block border-t border-line px-4 py-3 text-center text-xs font-semibold text-accent hover:bg-slate-50">{locale === "ar" ? "عرض كل الإشعارات" : "Tout voir"}</Link>
+          </div>}
+        </div>
         <span className="hidden h-7 w-px bg-line sm:block" />
         <button type="button" onClick={() => setLocale(locale === "fr" ? "ar" : "fr")} className="rounded-lg border border-line px-2 py-1.5 text-xs font-semibold text-accent hover:bg-slate-50" aria-label={locale === "fr" ? "العربية" : t("topbar.french")}>{locale === "fr" ? "عربي" : "FR"}</button>
-        <span className="hidden text-xs text-slate-400 sm:inline">€</span>
+       
 
         <div className="relative" ref={profileRef}>
           <button type="button" onClick={() => setProfileOpen((open) => !open)} className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-slate-50">

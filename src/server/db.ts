@@ -3,7 +3,7 @@ import mariadb, { type Pool } from "mariadb";
 // On stocke le pool dans `globalThis` : en développement, Next.js recharge
 // les modules à chaque modification, ce qui créerait un nouveau pool à
 // chaque fois et finirait par saturer MariaDB de connexions.
-const globalForDb = globalThis as unknown as { dentaflowPool?: Pool };
+const globalForDb = globalThis as unknown as { dentaclinicPool?: Pool };
 
 export function isDatabaseConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL);
@@ -14,10 +14,10 @@ export function getPool(): Pool {
   if (!url) {
     throw new Error("DATABASE_URL n'est pas définie dans .env.local");
   }
-  if (!globalForDb.dentaflowPool) {
+  if (!globalForDb.dentaclinicPool) {
     // On découpe l'URL nous-mêmes : le driver reçoit des options explicites.
     const parsed = new URL(url);
-    globalForDb.dentaflowPool = mariadb.createPool({
+    globalForDb.dentaclinicPool = mariadb.createPool({
       host: parsed.hostname,
       port: Number(parsed.port) || 3306,
       user: decodeURIComponent(parsed.username),
@@ -29,5 +29,5 @@ export function getPool(): Pool {
       dateStrings: true,
     });
   }
-  return globalForDb.dentaflowPool;
+  return globalForDb.dentaclinicPool;
 }

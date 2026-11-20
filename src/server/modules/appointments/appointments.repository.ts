@@ -23,7 +23,7 @@ export async function listAppointments(tenantId: number, from: string, to: strin
 export async function listPractitioners(tenantId: number) {
   return getPool().query(
     `SELECT id, full_name AS name, role FROM users
-      WHERE tenant_id = ? AND is_active = 1 AND deleted_at IS NULL AND role IN ('DENTIST', 'ADMIN')
+      WHERE tenant_id = ? AND is_active = 1 AND deleted_at IS NULL AND role = 'DENTIST'
       ORDER BY full_name`,
     [tenantId],
   );

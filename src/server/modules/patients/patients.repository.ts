@@ -4,24 +4,88 @@ import type { PatientInput } from "./patients.schema";
 
 const LIST_COLUMNS = `id, patient_number AS patientNumber, first_name AS firstName, last_name AS lastName,
   date_of_birth AS dateOfBirth, sex, national_id AS nationalId, phone, whatsapp, email, city, governorate,
-  allergies, chronic_conditions AS chronicConditions, balance_tnd AS balance, last_visit AS lastVisit`;
+  allergies, chronic_conditions AS chronicConditions, last_visit AS lastVisit`;
 
-export async function listPatients(tenantId: number, search: string) {
+export async function listPatients(tenantId: number, search: string, archived = false) {
   const like = `%${search}%`;
   return getPool().query(
-    `SELECT ${LIST_COLUMNS} FROM patients
-      WHERE tenant_id = ? AND deleted_at IS NULL
-        AND (? = '' OR patient_number LIKE ? OR first_name LIKE ? OR last_name LIKE ?
-          OR CONCAT(first_name, ' ', last_name) LIKE ? OR CONCAT(last_name, ' ', first_name) LIKE ?
-          OR phone LIKE ? OR whatsapp LIKE ? OR national_id LIKE ?)
-      ORDER BY last_name, first_name LIMIT 500`,
-    [tenantId, search, like, like, like, like, like, like, like, like],
+    `SELECT ${LIST_COLUMNS}, patients.deleted_at AS archivedAt,
+            COALESCE(treatment_balance.balance, patients.balance_tnd) AS balance
+       FROM patients
+       LEFT JOIN (
+         SELECT t.tenant_id, t.patient_id,
+                SUM(GREATEST(COALESCE(f.total_agreed, t.amount, 0) - COALESCE(payments.total_paid, 0), 0)) AS balance
+           FROM patient_treatments t
+           LEFT JOIN treatment_finances f ON f.tenant_id = t.tenant_id
+             AND f.patient_id = t.patient_id AND f.treatment_id = t.id
+           LEFT JOIN (
+             SELECT tenant_id, patient_id, treatment_id, SUM(amount) AS total_paid
+               FROM treatment_payments
+              WHERE tenant_id = ?
+              GROUP BY tenant_id, patient_id, treatment_id
+           ) payments ON payments.tenant_id = t.tenant_id
+             AND payments.patient_id = t.patient_id AND payments.treatment_id = t.id
+          WHERE t.tenant_id = ?
+          GROUP BY t.tenant_id, t.patient_id
+       ) treatment_balance ON treatment_balance.tenant_id = patients.tenant_id
+         AND treatment_balance.patient_id = patients.id
+      WHERE patients.tenant_id = ? AND patients.deleted_at IS ${archived ? "NOT NULL" : "NULL"}
+        AND (? = '' OR patients.patient_number LIKE ? OR patients.first_name LIKE ? OR patients.last_name LIKE ?
+          OR CONCAT(patients.first_name, ' ', patients.last_name) LIKE ? OR CONCAT(patients.last_name, ' ', patients.first_name) LIKE ?
+          OR patients.phone LIKE ? OR patients.whatsapp LIKE ? OR patients.national_id LIKE ?)
+      ORDER BY patients.created_at DESC, patients.id DESC LIMIT 500`,
+    [tenantId, tenantId, tenantId, search, like, like, like, like, like, like, like, like],
   );
+}
+
+export async function listReceivables(tenantId: number) {
+  return getPool().query(
+    `WITH treatment_balance AS (
+       SELECT t.tenant_id, t.patient_id,
+              SUM(GREATEST(COALESCE(f.total_agreed, t.amount, 0) - COALESCE(payments.total_paid, 0), 0)) AS balance
+         FROM patient_treatments t
+         LEFT JOIN treatment_finances f ON f.tenant_id = t.tenant_id
+           AND f.patient_id = t.patient_id AND f.treatment_id = t.id
+         LEFT JOIN (
+           SELECT tenant_id, patient_id, treatment_id, SUM(amount) AS total_paid
+             FROM treatment_payments
+            WHERE tenant_id = ?
+            GROUP BY tenant_id, patient_id, treatment_id
+         ) payments ON payments.tenant_id = t.tenant_id
+           AND payments.patient_id = t.patient_id AND payments.treatment_id = t.id
+        WHERE t.tenant_id = ?
+        GROUP BY t.tenant_id, t.patient_id
+     ), debtors AS (
+       SELECT patients.id, patients.patient_number AS patientNumber,
+              patients.first_name AS firstName, patients.last_name AS lastName,
+              treatment_balance.balance AS balance
+         FROM patients
+         LEFT JOIN treatment_balance ON treatment_balance.tenant_id = patients.tenant_id
+           AND treatment_balance.patient_id = patients.id
+        WHERE patients.tenant_id = ? AND patients.deleted_at IS NULL
+          AND treatment_balance.balance > 0
+     )
+     SELECT id, patientNumber, firstName, lastName, balance,
+            SUM(balance) OVER () AS totalReceivable,
+            COUNT(*) OVER () AS debtorCount
+       FROM debtors
+      ORDER BY balance DESC, lastName, firstName
+      LIMIT 6`,
+    [tenantId, tenantId, tenantId],
+  );
+}
+
+export async function countActivePatients(tenantId: number) {
+  const rows = await getPool().query(
+    "SELECT COUNT(*) AS total FROM patients WHERE tenant_id = ? AND deleted_at IS NULL",
+    [tenantId],
+  );
+  return Number(rows[0]?.total ?? 0);
 }
 
 export async function findPatient(tenantId: number, id: number) {
   const rows = await getPool().query(
-    `SELECT ${LIST_COLUMNS}, address, profession, marital_status AS maritalStatus, emergency_contact AS emergencyContact,
+    `SELECT ${LIST_COLUMNS}, balance_tnd AS balance, address, profession, marital_status AS maritalStatus, emergency_contact AS emergencyContact,
             medications, anamnesis, pregnancy_status AS pregnancyStatus, diabetes, hypertension, anticoagulants,
             medical_notes AS medicalNotes, created_at AS createdAt
        FROM patients WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL LIMIT 1`,
@@ -64,6 +128,14 @@ export async function updatePatient(connection: PoolConnection, tenantId: number
 export async function softDeletePatient(connection: PoolConnection, tenantId: number, id: number) {
   const result = await connection.query(
     "UPDATE patients SET deleted_at = CURRENT_TIMESTAMP(3) WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
+    [id, tenantId],
+  );
+  return result.affectedRows > 0;
+}
+
+export async function restorePatient(connection: PoolConnection, tenantId: number, id: number) {
+  const result = await connection.query(
+    "UPDATE patients SET deleted_at = NULL WHERE id = ? AND tenant_id = ? AND deleted_at IS NOT NULL",
     [id, tenantId],
   );
   return result.affectedRows > 0;

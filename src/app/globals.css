@@ -13,6 +13,10 @@
   --color-line: #e7edf5;
 }
 
+html {
+  font-size: 16px;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-ink);
@@ -24,6 +28,99 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not(.tooth-picker-input),
+select,
+textarea {
+  box-sizing: border-box;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background-color: #ffffff;
+  color: #172b4d;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not(.tooth-picker-input),
+select {
+  min-height: 2.75rem;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not(.tooth-picker-input)),
+:where(select) {
+  padding-inline: 0.875rem;
+}
+
+.search-with-icon,
+input.search-with-icon,
+.search-input-with-icon {
+  padding-inline-start: 2.75rem !important;
+  padding-inline-end: 1rem !important;
+}
+
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+}
+
+textarea {
+  min-height: 6rem;
+  padding: 0.75rem 0.875rem;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not(.tooth-picker-input):hover,
+select:hover,
+textarea:hover {
+  border-color: #94a3b8;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not(.tooth-picker-input):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: #6c5ce7;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(108 92 231 / 18%);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  border-color: #e2e8f0;
+  background-color: #f1f5f9;
+  color: #64748b;
+  opacity: 1;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: #6c5ce7;
+}
+
+label:has(input:required:not([type="checkbox"]):not([type="radio"]), select:required, textarea:required)::before {
+  content: "*";
+  display: inline-block;
+  margin-inline-end: 0.25rem;
+  color: #dc2626;
+  font-weight: 700;
+}
+
+label.block:has(input:not([type="checkbox"]):not([type="radio"]), select, textarea) input:not([type="checkbox"]):not([type="radio"]),
+label.block:has(input:not([type="checkbox"]):not([type="radio"]), select, textarea) select,
+label.block:has(input:not([type="checkbox"]):not([type="radio"]), select, textarea) textarea {
+  display: block;
+  width: 100%;
+  margin-block-start: 0.375rem;
 }
 
 html[dir="rtl"] .md\:pl-64 {
@@ -42,4 +139,220 @@ html[dir="rtl"] aside {
   html[dir="rtl"] .md\:pl-64 {
     padding-right: 0;
   }
+}
+
+.quote-print-root {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  padding: 16mm;
+  color: #172b4d;
+  background: #ffffff;
+  font-family: Arial, sans-serif;
+  font-size: 11.5pt;
+  line-height: 1.5;
+}
+
+.clinic-document-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 2px solid #6c5ce7;
+  padding-bottom: 18px;
+}
+
+.clinic-document-name {
+  color: #172b4d;
+  font-size: 20pt;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.clinic-document-subtitle {
+  margin-top: 5px;
+  color: #334155;
+  font-size: 11pt;
+  font-weight: 600;
+}
+
+.clinic-document-contact {
+  margin-top: 10px;
+  color: #334155;
+  font-size: 10pt;
+  line-height: 1.5;
+}
+
+.clinic-document-reference {
+  text-align: end;
+}
+
+.clinic-document-reference h1 {
+  margin-bottom: 8px;
+  color: #5142b8;
+  font-size: 22pt;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.clinic-document-reference p {
+  margin-top: 5px;
+  color: #334155;
+  font-size: 10.5pt;
+}
+
+.clinic-document-reference p strong {
+  color: #172b4d;
+  font-weight: 700;
+}
+
+.quote-print-patient {
+  margin: 24px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.quote-print-section-title {
+  margin-bottom: 5px;
+  color: #334155;
+  font-size: 10pt;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.quote-print-patient-name {
+  color: #172b4d;
+  font-size: 13pt;
+  font-weight: 700;
+}
+
+.quote-print-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.quote-print-table th,
+.quote-print-table td {
+  border-bottom: 1px solid #cbd5e1;
+  padding: 11px 9px;
+  color: #1e293b;
+  text-align: start;
+}
+
+.quote-print-table th {
+  background: #eef2f8;
+  color: #1e293b;
+  font-size: 10pt;
+  font-weight: 700;
+}
+
+.quote-print-total {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 18px;
+  border: 1px solid #c4b5fd;
+  border-radius: 6px;
+  background: #f3f1ff;
+  padding: 14px;
+  color: #1e293b;
+  font-size: 13pt;
+  font-weight: 600;
+}
+
+.quote-print-total strong {
+  color: #4937a5;
+  font-size: 16pt;
+  font-weight: 700;
+}
+
+.quote-print-note {
+  margin-top: 24px;
+  color: #334155;
+  font-size: 10pt;
+}
+
+.document-signature-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 36px;
+}
+
+.document-signature-fields-with-patient {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.document-signature-field {
+  display: flex;
+  min-height: 92px;
+  align-items: flex-start;
+  border: 1.5px solid #64748b;
+  border-radius: 4px;
+  padding: 10px;
+  color: #172b4d;
+  font-size: 10.5pt;
+  line-height: 1.35;
+}
+
+.document-signature-field p {
+  font-weight: 700;
+}
+
+.document-stamp-field {
+  border: 1.5px dashed #5142b8;
+  background: #f8f7ff;
+}
+
+.quote-print-footer {
+  margin-top: 36px;
+  border-top: 1px solid #cbd5e1;
+  padding-top: 10px;
+  color: #475569;
+  text-align: center;
+  font-size: 9pt;
+}
+
+.invoice-print-patient-details {
+  margin-top: 6px;
+  color: #334155;
+  font-size: 10pt;
+}
+
+.invoice-print-patient-details p + p {
+  margin-top: 3px;
+}
+
+.invoice-print-totals {
+  width: min(100%, 360px);
+  margin: 20px 0 0 auto;
+  color: #1e293b;
+  font-size: 11pt;
+}
+
+.invoice-print-totals p {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 5px 0;
+}
+
+.invoice-print-totals .invoice-print-grand-total {
+  margin-top: 5px;
+  border-top: 1px solid #cbd5e1;
+  color: #172b4d;
+  font-size: 13pt;
+  font-weight: 700;
+}
+
+.invoice-print-totals .invoice-print-grand-total strong,
+.invoice-print-totals .invoice-print-balance strong {
+  color: #4937a5;
+}
+
+.invoice-print-totals .invoice-print-balance {
+  border-top: 1px solid #e2e8f0;
+  font-weight: 700;
 }

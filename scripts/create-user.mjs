@@ -11,11 +11,11 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 const tenantId = Number(await rl.question("tenant_id du cabinet (ex. 1) : "));
 const fullName = (await rl.question("Nom complet : ")).trim();
 const email = (await rl.question("E-mail : ")).trim().toLowerCase();
-const role = ((await rl.question("Rôle (ADMIN / DENTIST / SECRETARY / ASSISTANT) [ADMIN] : ")).trim().toUpperCase()) || "ADMIN";
+const role = ((await rl.question("Type de compte (DENTIST / SECRETARY) [SECRETARY] : ")).trim().toUpperCase()) || "SECRETARY";
 const password = await rl.question("Mot de passe (10 caractères min.) : ");
 rl.close();
 
-if (!tenantId || !fullName || !email.includes("@") || password.length < 10) {
+if (!tenantId || !fullName || !email.includes("@") || !["DENTIST", "SECRETARY"].includes(role) || password.length < 10) {
   console.error("Informations invalides.");
   process.exit(1);
 }

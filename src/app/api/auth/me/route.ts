@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/server/auth/session";
 import { getPool } from "@/server/db";
+import { getViewableModules } from "@/server/auth/access-control";
 
 export async function GET() {
   const session = await getSession();
@@ -11,5 +12,8 @@ export async function GET() {
     [session.userId, session.tenantId],
   );
   if (!rows[0]) return NextResponse.json({ error: "Compte introuvable." }, { status: 401 });
-  return NextResponse.json({ user: { id: rows[0].id, name: rows[0].full_name, email: rows[0].email, role: rows[0].role } });
+  return NextResponse.json({
+    user: { id: rows[0].id, name: rows[0].full_name, email: rows[0].email, role: rows[0].role },
+    viewableModules: await getViewableModules(session),
+  }, { headers: { "Cache-Control": "no-store" } });
 }

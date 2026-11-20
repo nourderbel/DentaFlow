@@ -20,12 +20,13 @@ if (!process.env.DATABASE_URL) {
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 const clinicName = (await rl.question("Nom du cabinet : ")).trim();
-const fullName = (await rl.question("Nom complet de l'administrateur : ")).trim();
+const fullName = (await rl.question("Nom complet : ")).trim();
+const role = ((await rl.question("Type de compte (DENTIST / SECRETARY) [SECRETARY] : ")).trim().toUpperCase()) || "SECRETARY";
 const email = (await rl.question("E-mail de connexion : ")).trim().toLowerCase();
 const password = await rl.question("Mot de passe (10 caractères minimum) : ");
 rl.close();
 
-if (!clinicName || !fullName || !email.includes("@") || password.length < 10) {
+if (!clinicName || !fullName || !email.includes("@") || !["DENTIST", "SECRETARY"].includes(role) || password.length < 10) {
   console.error("Informations invalides : tout est obligatoire, mot de passe de 10 caractères minimum.");
   process.exit(1);
 }
@@ -55,8 +56,8 @@ try {
   );
 
   const user = await connection.query(
-    "INSERT INTO users (tenant_id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, 'ADMIN')",
-    [tenantId, fullName, email, await hashPassword(password)],
+    "INSERT INTO users (tenant_id, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+    [tenantId, fullName, email, await hashPassword(password), role],
   );
 
   await connection.query(

@@ -7,6 +7,7 @@ export type Locale = "fr" | "ar";
 const translations: Record<Locale, Record<string, string>> = {
   fr: {
     "nav.cabinet": "Cabinet",
+    "nav.home": "Accueil",
     "nav.dashboard": "Tableau de bord",
     "nav.agenda": "Agenda",
     "nav.patients": "Patients",
@@ -58,6 +59,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "patients.records": "dossier(s) patient",
     "patients.dataNotice": "Données conservées dans l’espace du cabinet.",
     "agenda.today": "Aujourd’hui",
+    "agenda.currentDay": "Aujourd’hui",
     "agenda.day": "Jour",
     "agenda.week": "Semaine",
     "agenda.month": "Mois",
@@ -66,7 +68,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "agenda.allChairs": "Tous les fauteuils",
     "agenda.import": "Importer CSV",
     "dashboard.subtitle": "Vue d'ensemble du cabinet",
-    "dashboard.welcome": "Bienvenue sur DentaFlow.",
+    "dashboard.welcome": "Bienvenue sur DentaClinic.",
     "auth.subtitle": "Connectez-vous à votre cabinet",
     "auth.email": "E-mail",
     "auth.password": "Mot de passe",
@@ -104,7 +106,6 @@ const translations: Record<Locale, Record<string, string>> = {
     "patient.edit": "Modifier le patient",
     "patient.medicalInfo": "Informations médicales",
     "patient.confidential": "Dossier clinique confidentiel",
-    "patient.openRecord": "Ouvrir le dossier",
     "patient.odontogram": "Odontogramme",
     "patient.permanentDentition": "Dentition permanente · Numérotation FDI",
     "patient.viewAll": "Tout voir ›",
@@ -138,6 +139,7 @@ const translations: Record<Locale, Record<string, string>> = {
   },
   ar: {
     "nav.cabinet": "العيادة",
+    "nav.home": "الرئيسية",
     "nav.dashboard": "لوحة التحكم",
     "nav.agenda": "المواعيد",
     "nav.patients": "المرضى",
@@ -189,6 +191,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "patients.records": "ملف مريض",
     "patients.dataNotice": "البيانات محفوظة في مساحة العيادة.",
     "agenda.today": "اليوم",
+    "agenda.currentDay": "اليوم",
     "agenda.day": "اليوم",
     "agenda.week": "الأسبوع",
     "agenda.month": "الشهر",
@@ -197,7 +200,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "agenda.allChairs": "كل الكراسي",
     "agenda.import": "استيراد CSV",
     "dashboard.subtitle": "نظرة عامة على العيادة",
-    "dashboard.welcome": "مرحباً بكم في DentaFlow.",
+    "dashboard.welcome": "مرحباً بكم في DentaClinic.",
     "auth.subtitle": "سجّل الدخول إلى عيادتك",
     "auth.email": "البريد الإلكتروني",
     "auth.password": "كلمة المرور",
@@ -235,7 +238,6 @@ const translations: Record<Locale, Record<string, string>> = {
     "patient.edit": "تعديل المريض",
     "patient.medicalInfo": "المعلومات الطبية",
     "patient.confidential": "ملف سريري سري",
-    "patient.openRecord": "فتح الملف",
     "patient.odontogram": "مخطط الأسنان",
     "patient.permanentDentition": "الأسنان الدائمة · ترقيم FDI",
     "patient.viewAll": "عرض الكل ›",
@@ -281,14 +283,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>("fr");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("dentaflow-locale");
+    const saved = window.localStorage.getItem("dentaclinic-locale") || window.localStorage.getItem("dentaflow-locale");
     if (saved !== "fr" && saved !== "ar") return;
     const timer = window.setTimeout(() => setLocale(saved), 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("dentaflow-locale", locale);
+    window.localStorage.setItem("dentaclinic-locale", locale);
     document.documentElement.lang = locale;
     document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
   }, [locale]);

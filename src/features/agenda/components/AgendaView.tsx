@@ -20,14 +20,17 @@ import type {
   Patient,
   Practitioner,
 } from "../types";
+import { APPOINTMENT_STATUS_COLOR_DEFAULTS } from "../status-colors";
 import { useI18n } from "@/lib/i18n";
+import { createPatient } from "@/features/patients/api";
+import { EMPTY_PATIENT_FORM, type PatientFormValues } from "@/features/patients/types";
+import { PatientCombobox } from "./PatientCombobox";
 
 const HOURS = Array.from({ length: 11 }, (_, i) => i + 8);
 type AgendaViewMode = "day" | "week" | "month" | "list";
 
 const STATUS_LABELS: Record<AppointmentStatus, string> = {
   PENDING: "En attente",
-  PLANNED: "Planifié",
   CONFIRMED: "Confirmé",
   ARRIVED: "Arrivé",
   IN_CONSULTATION: "En consultation",
@@ -35,6 +38,16 @@ const STATUS_LABELS: Record<AppointmentStatus, string> = {
   CANCELLED: "Annulé",
   NO_SHOW: "Absent",
 };
+
+const STATUS_ACTIONS: AppointmentStatus[] = [
+  "PENDING",
+  "CONFIRMED",
+  "ARRIVED",
+  "IN_CONSULTATION",
+  "COMPLETED",
+  "CANCELLED",
+  "NO_SHOW",
+];
 
 function formatDate(date: Date) {
   const year = date.getFullYear();
@@ -73,9 +86,6 @@ function statusClass(status: AppointmentStatus) {
     case "PENDING":
       return "border border-[#dfe9ff] bg-[#edf5ff] text-[#2d5fcb]";
 
-    case "PLANNED":
-      return "border border-[#e5d9ff] bg-[#f3ecff] text-[#6d4dd8]";
-
     case "CONFIRMED":
       return "border border-[#d8f6e3] bg-[#ebfff2] text-[#1f8b5a]";
 
@@ -84,9 +94,6 @@ function statusClass(status: AppointmentStatus) {
 
     case "IN_CONSULTATION":
       return "border border-[#eadcff] bg-[#f6f0ff] text-[#7b5ee8]";
-
-    case "COMPLETED":
-      return "border border-[#dfe7ea] bg-[#f1f5f9] text-[#475569]";
 
     case "CANCELLED":
       return "border border-[#fecaca] bg-[#fff1f2] text-[#b42318]";
@@ -97,66 +104,36 @@ function statusClass(status: AppointmentStatus) {
     default:
       return "border border-[#dfeaed] bg-[#edf7ff] text-[#1873ae]";
   }
-
 }
 
-function parseCsv(content: string): Record<string, string>[] {
-  const delimiter = content.split(/\r?\n/, 1)[0]?.includes(";") ? ";" : ",";
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const character = content[index];
-    const next = content[index + 1];
-
-    if (character === '"' && quoted && next === '"') {
-      cell += '"';
-      index += 1;
-    } else if (character === '"') {
-      quoted = !quoted;
-    } else if (character === delimiter && !quoted) {
-      row.push(cell.trim());
-      cell = "";
-    } else if ((character === "\n" || character === "\r") && !quoted) {
-      if (character === "\r" && next === "\n") index += 1;
-      row.push(cell.trim());
-      if (row.some(Boolean)) rows.push(row);
-      row = [];
-      cell = "";
-    } else {
-      cell += character;
-    }
-  }
-
-  if (cell || row.length > 0) {
-    row.push(cell.trim());
-    if (row.some(Boolean)) rows.push(row);
-  }
-
-  const headers = rows.shift()?.map((header) =>
-    header.replace(/^\uFEFF/, "").trim(),
-  ) ?? [];
-
-  return rows.map((values) =>
-    Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])),
-  );
+function statusStyle(status: AppointmentStatus, colors: Record<AppointmentStatus, string>) {
+  const color = colors[status];
+  return {
+    color,
+    backgroundColor: `color-mix(in srgb, ${color} 12%, white)`,
+    borderColor: `color-mix(in srgb, ${color} 32%, white)`,
+  };
 }
 
 export default function AgendaView() {
   const { t } = useI18n();
   const [weekStart, setWeekStart] = useState(startOfWeek(new Date()));
   const minDate = formatDate(new Date());
+  const todayDate = formatDate(new Date());
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentStatusColors, setAppointmentStatusColors] = useState(APPOINTMENT_STATUS_COLOR_DEFAULTS);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [patientModalOpen, setPatientModalOpen] = useState(false);
+  const [newPatient, setNewPatient] = useState<PatientFormValues>(EMPTY_PATIENT_FORM);
+  const [patientSaving, setPatientSaving] = useState(false);
   const [error, setError] = useState("");
   const [selectedChair, setSelectedChair] = useState("Tous les fauteuils");
+  const [selectedDentist, setSelectedDentist] = useState("ALL");
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null);
   const [rescheduleForm, setRescheduleForm] = useState({ date: minDate, time: "09:00" });
   const [historyTarget, setHistoryTarget] = useState<Appointment | null>(null);
@@ -164,10 +141,33 @@ export default function AgendaView() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [editTarget, setEditTarget] = useState<Appointment | null>(null);
   const [detailTarget, setDetailTarget] = useState<Appointment | null>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
-  const [importingCsv, setImportingCsv] = useState(false);
-  const [importMessage, setImportMessage] = useState("");
+  const [notificationAppointmentId, setNotificationAppointmentId] = useState<number | null>(null);
+  const handledNotificationAppointment = useRef(false);
   const [viewMode, setViewMode] = useState<AgendaViewMode>("week");
+
+  useEffect(() => {
+    const syncStatusColors = () => {
+      try {
+        const settings = JSON.parse(window.localStorage.getItem("dentaclinic-settings") ?? window.localStorage.getItem("dentaflow-settings") ?? "{}");
+        const storedColors = settings.appointmentStatusColors;
+        if (!storedColors || typeof storedColors !== "object") return;
+        const nextColors = { ...APPOINTMENT_STATUS_COLOR_DEFAULTS };
+        for (const status of Object.keys(nextColors) as AppointmentStatus[]) {
+          const value = storedColors[status];
+          if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) {
+            nextColors[status] = value;
+          }
+        }
+        setAppointmentStatusColors(nextColors);
+      } catch (cause) {
+        setError(cause instanceof Error ? `Impossible de charger les couleurs des rendez-vous : ${cause.message}` : "Impossible de charger les couleurs des rendez-vous.");
+      }
+    };
+
+    syncStatusColors();
+    window.addEventListener("storage", syncStatusColors);
+    return () => window.removeEventListener("storage", syncStatusColors);
+  }, []);
 
   const [form, setForm] = useState<AppointmentFormValues>({
     patientId: "",
@@ -197,28 +197,31 @@ export default function AgendaView() {
     return Array.from({ length: count }, (_, index) => addDays(firstGridDay, index));
   }, [weekStart]);
 
-  const activeDates = viewMode === "day"
-    ? [weekStart]
-    : viewMode === "month"
-      ? monthDates
-      : weekDates;
+  const activeDates = useMemo(
+    () => viewMode === "day"
+      ? [weekStart]
+      : viewMode === "month"
+        ? monthDates
+        : weekDates,
+    [monthDates, viewMode, weekDates, weekStart],
+  );
 
   const chairOptions = useMemo(() => {
-    const items = new Set(["Tous les fauteuils"]);
+    const items = new Set(["Fauteuil 1", "Fauteuil 2", "Fauteuil 3"]);
 
     appointments.forEach((appointment) => {
       items.add(appointment.chairId);
     });
 
-    return Array.from(items);
+    return Array.from(items).sort((left, right) => left.localeCompare(right, "fr", { numeric: true }));
   }, [appointments]);
 
   const filteredAppointments = useMemo(
-    () =>
-      selectedChair === "Tous les fauteuils"
-        ? appointments
-        : appointments.filter((appointment) => appointment.chairId === selectedChair),
-    [appointments, selectedChair],
+    () => appointments.filter((appointment) =>
+      (selectedChair === "Tous les fauteuils" || appointment.chairId === selectedChair)
+      && (selectedDentist === "ALL" || String(appointment.dentistId) === selectedDentist),
+    ),
+    [appointments, selectedChair, selectedDentist],
   );
 
   const summaryDate = useMemo(() => {
@@ -261,29 +264,6 @@ export default function AgendaView() {
       ),
     [summaryCounts],
   );
-
-  function statusDotClass(status: AppointmentStatus) {
-    switch (status) {
-      case "PENDING":
-        return "bg-[#2d5fcb]";
-      case "PLANNED":
-        return "bg-[#6d4dd8]";
-      case "CONFIRMED":
-        return "bg-[#1f8b5a]";
-      case "ARRIVED":
-        return "bg-[#a76507]";
-      case "IN_CONSULTATION":
-        return "bg-[#7b5ee8]";
-      case "COMPLETED":
-        return "bg-[#475569]";
-      case "CANCELLED":
-        return "bg-[#b42318]";
-      case "NO_SHOW":
-        return "bg-[#4b5563]";
-      default:
-        return "bg-slate-400";
-    }
-  }
 
   const pendingAppointments = useMemo(
     () =>
@@ -333,80 +313,6 @@ export default function AgendaView() {
       setLoading(false);
     }
 
-  }
-
-  async function handleCsvImport(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    try {
-      setImportingCsv(true);
-      setImportMessage("");
-      setError("");
-
-      const rows = parseCsv(await file.text());
-      if (rows.length === 0) {
-        throw new Error("Le fichier CSV est vide.");
-      }
-
-      const requiredColumns = [
-        "patientId",
-        "dentistId",
-        "chairId",
-        "date",
-        "time",
-        "durationMinutes",
-        "type",
-      ];
-      const missingColumns = requiredColumns.filter(
-        (column) => !(column in rows[0]),
-      );
-
-      if (missingColumns.length > 0) {
-        throw new Error(`Colonnes manquantes : ${missingColumns.join(", ")}.`);
-      }
-
-      let imported = 0;
-      const errors: string[] = [];
-
-      for (const [index, row] of rows.entries()) {
-        try {
-          await createAppointment({
-            patientId: row.patientId,
-            dentistId: row.dentistId,
-            chairId: row.chairId,
-            date: row.date,
-            time: row.time,
-            durationMinutes: row.durationMinutes,
-            type: row.type || "Consultation",
-            notes: row.notes || "",
-          });
-          imported += 1;
-        } catch (err) {
-          errors.push(
-            `Ligne ${index + 2} : ${
-              err instanceof Error ? err.message : "données invalides"
-            }`,
-          );
-        }
-      }
-
-      await loadData();
-      setImportMessage(
-        errors.length > 0
-          ? `${imported} rendez-vous importé(s), ${errors.length} ligne(s) rejetée(s). ${errors.join(" ")}`
-          : `${imported} rendez-vous importé(s) avec succès.`,
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Impossible d'importer le fichier CSV.",
-      );
-    } finally {
-      setImportingCsv(false);
-    }
   }
 
   useEffect(() => {
@@ -467,6 +373,38 @@ export default function AgendaView() {
     };
   }, [weekStart, viewMode]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (handledNotificationAppointment.current) return;
+      const params = new URLSearchParams(window.location.search);
+      const appointmentId = Number(params.get("appointmentId"));
+      const date = params.get("date") ?? "";
+      if (!Number.isSafeInteger(appointmentId) || appointmentId <= 0) return;
+      handledNotificationAppointment.current = true;
+      setNotificationAppointmentId(appointmentId);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && formatDate(new Date(`${date}T00:00:00`)) === date) {
+        setWeekStart(startOfWeek(new Date(`${date}T00:00:00`)));
+        setViewMode("week");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (notificationAppointmentId === null) return;
+    const appointment = appointments.find((item) => item.id === notificationAppointmentId);
+    if (!appointment) return;
+    const timer = window.setTimeout(() => {
+      setDetailTarget(appointment);
+      setNotificationAppointmentId(null);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("appointmentId");
+      url.searchParams.delete("date");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [appointments, notificationAppointmentId]);
+
   function openCreateModal(date?: Date, time?: string) {
     const nextDate = date || new Date();
     const safeDate = formatDate(nextDate);
@@ -483,6 +421,24 @@ export default function AgendaView() {
     });
 
     setModalOpen(true);
+  }
+
+  async function handleCreatePatient(event: React.FormEvent) {
+    event.preventDefault();
+    setPatientSaving(true);
+    try {
+      const result = await createPatient(newPatient);
+      const refreshedPatients = await fetchPatients();
+      setPatients(refreshedPatients);
+      setForm((current) => ({ ...current, patientId: String(result.data.id) }));
+      setNewPatient(EMPTY_PATIENT_FORM);
+      setPatientModalOpen(false);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Impossible de créer le patient.");
+    } finally {
+      setPatientSaving(false);
+    }
   }
 
   function openEditModal(appointment: Appointment) {
@@ -506,6 +462,10 @@ export default function AgendaView() {
 
     try {
       setError("");
+      if (!form.patientId) {
+        setError("Veuillez sélectionner un patient.");
+        return;
+      }
       if (editTarget) {
         await updateAppointment(editTarget.id, form);
       } else {
@@ -529,24 +489,22 @@ export default function AgendaView() {
     try {
       await updateAppointmentStatus(appointment.id, status);
       await loadData();
+      return true;
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Impossible de modifier le statut.",
       );
+      return false;
     }
-
   }
 
   async function changeDetailStatus(status: AppointmentStatus) {
     if (!detailTarget) return;
 
-    await changeStatus(detailTarget, status);
-    setDetailTarget({
-      ...detailTarget,
-      status,
-    });
+    const updated = await changeStatus(detailTarget, status);
+    if (updated) setDetailTarget(null);
   }
 
   function openRescheduleModal(appointment: Appointment) {
@@ -633,31 +591,6 @@ export default function AgendaView() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-xl border border-[#dfe3ea] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-            >
-              <Icon name="upload" size={16} className="text-slate-600" />
-              {t("agenda.import")}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => csvInputRef.current?.click()}
-              disabled={importingCsv}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#dfe3ea] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-            >
-              <Icon name="file" size={16} className="text-slate-600" />
-              {importingCsv ? "Import en cours..." : "CSV"}
-            </button>
-            <input
-              ref={csvInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleCsvImport}
-              className="hidden"
-            />
-
-            <button
-              type="button"
               onClick={() => openCreateModal()}
               className="inline-flex items-center gap-2 rounded-xl bg-[#6b5ce7] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(107,92,231,0.22)] transition hover:brightness-105"
             >
@@ -710,7 +643,10 @@ export default function AgendaView() {
                   <button
                     key={tab}
                     type="button"
-                    onClick={() => setViewMode(mode as AgendaViewMode)}
+                    onClick={() => {
+                      if (mode === "day") setWeekStart(new Date());
+                      setViewMode(mode as AgendaViewMode);
+                    }}
                     className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
                       viewMode === mode
                         ? 'bg-white text-slate-700 shadow-sm'
@@ -730,37 +666,55 @@ export default function AgendaView() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span className="inline-flex items-center gap-2 rounded-lg border border-[#dfe3ea] bg-white px-2 py-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#e7edf5]" />
-                  Tous les praticiens
-                </span>
-                <span className="inline-flex items-center gap-2 rounded-lg border border-[#dfe3ea] bg-white px-2 py-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#e7edf5]" />
-                  {t("agenda.allChairs")}
-                </span>
-              </div>
+              <span className="text-xs text-slate-500">
+                {filteredAppointments.length} rendez-vous affiché{filteredAppointments.length > 1 ? "s" : ""}
+              </span>
             </div>
 
-            <div className="flex flex-wrap gap-2 border-b border-[#edf1f7] bg-[#f9fafc] px-4 py-3">
-              {chairOptions.map((chair) => {
-                const isActive = selectedChair === chair;
-
-                return (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-b border-[#edf1f7] bg-[#f9fafc] px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-xs font-semibold text-slate-500">Fauteuil :</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedChair("Tous les fauteuils")}
+                  aria-pressed={selectedChair === "Tous les fauteuils"}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    selectedChair === "Tous les fauteuils"
+                      ? "bg-[#e9e4ff] text-[#4d3cd2] ring-1 ring-[#d9d0ff]"
+                      : "bg-white text-slate-600 ring-1 ring-[#e5eaf2] hover:text-slate-800"
+                  }`}
+                >
+                  {t("agenda.allChairs")}
+                </button>
+                {chairOptions.map((chair) => (
                   <button
                     key={chair}
                     type="button"
                     onClick={() => setSelectedChair(chair)}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                      isActive
-                        ? 'bg-[#e9e4ff] text-[#4d3cd2] ring-1 ring-[#d9d0ff]'
-                        : 'bg-white text-slate-600 ring-1 ring-[#e5eaf2] hover:text-slate-800'
+                    aria-pressed={selectedChair === chair}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      selectedChair === chair
+                        ? "bg-[#e9e4ff] text-[#4d3cd2] ring-1 ring-[#d9d0ff]"
+                        : "bg-white text-slate-600 ring-1 ring-[#e5eaf2] hover:text-slate-800"
                     }`}
                   >
                     {chair}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                Médecin :
+                <select
+                  value={selectedDentist}
+                  onChange={(event) => setSelectedDentist(event.target.value)}
+                  className="min-w-44 rounded-lg border border-[#e5eaf2] bg-white px-3 py-2 text-xs font-medium text-slate-700 outline-none focus:border-accent"
+                >
+                  <option value="ALL">Tous les médecins</option>
+                  {practitioners.map((practitioner) => (
+                    <option key={practitioner.id} value={String(practitioner.id)}>{practitioner.name}</option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             {(viewMode === "week" || viewMode === "day") && (
@@ -776,7 +730,7 @@ export default function AgendaView() {
                   <div className="border-r border-[#edf1f7] bg-[#fbfcfe] text-sm text-slate-400" />
 
                   {activeDates.map((date) => {
-                    const isToday = formatDate(date) === formatDate(new Date());
+                    const isToday = formatDate(date) === todayDate;
 
                     return (
                       <div
@@ -789,12 +743,15 @@ export default function AgendaView() {
                           {new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(date)}
                         </div>
 
-                        <div
-                          className={`mt-1.5 text-lg font-semibold ${
-                            isToday ? 'text-[#6b5ce7]' : 'text-[#1f2a37]'
-                          }`}
-                        >
-                          {date.getDate()}
+                        <div className="mt-1.5 flex items-center justify-center gap-2">
+                          <span className={`text-lg font-semibold ${isToday ? "text-[#6b5ce7]" : "text-[#1f2a37]"}`}>
+                            {date.getDate()}
+                          </span>
+                          {isToday && (
+                            <span className="rounded-full bg-[#6b5ce7] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                              {t("agenda.currentDay")}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
@@ -820,14 +777,16 @@ export default function AgendaView() {
                       return (
                         <div
                           key={`${formatDate(date)}-${hour}`}
-                          onDoubleClick={() =>
-                            openCreateModal(date, `${String(hour).padStart(2, '0')}:00`)}
+                          onClick={() => openCreateModal(date, `${String(hour).padStart(2, '0')}:00`)}
                           className="relative min-h-[118px] border-r border-[#edf1f7] bg-white p-1.5 transition hover:bg-slate-50"
                         >
                           {items.map((appointment) => (
                             <div
                               key={appointment.id}
-                              onClick={() => setDetailTarget(appointment)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDetailTarget(appointment);
+                              }}
                               role="button"
                               tabIndex={0}
                               onKeyDown={(event) => {
@@ -836,6 +795,7 @@ export default function AgendaView() {
                                 }
                               }}
                               className={`mb-1.5 cursor-pointer rounded-xl border p-2 text-[11px] shadow-sm transition hover:brightness-[0.98] ${statusClass(appointment.status)}`}
+                              style={statusStyle(appointment.status, appointmentStatusColors)}
                             >
                               <div className="flex items-start justify-between gap-1">
                                 <div className="font-semibold leading-tight">
@@ -866,6 +826,7 @@ export default function AgendaView() {
               <div className="grid grid-cols-7 border-l border-t border-[#edf1f7]">
                 {monthDates.map((date) => {
                   const isCurrentMonth = date.getMonth() === weekStart.getMonth();
+                  const isToday = formatDate(date) === todayDate;
                   const dayAppointments = filteredAppointments.filter(
                     (appointment) => appointment.date === formatDate(date),
                   );
@@ -874,24 +835,35 @@ export default function AgendaView() {
                     <div
                       key={formatDate(date)}
                       onDoubleClick={() => openCreateModal(date, "09:00")}
-                      className={`min-h-[150px] border-b border-r border-[#edf1f7] p-2 ${
-                        isCurrentMonth ? "bg-white" : "bg-[#fafbfc]"
+                      className={`min-h-37.5 border-b border-r border-[#edf1f7] p-2 ${
+                        isToday ? "bg-[#f3efff] ring-2 ring-inset ring-[#6b5ce7]/45" : isCurrentMonth ? "bg-white" : "bg-[#fafbfc]"
                       }`}
                     >
-                      <div className={`mb-2 text-sm font-semibold ${
-                        isCurrentMonth ? "text-slate-700" : "text-slate-300"
-                      }`}>
-                        {date.getDate()}
+                      <div className="mb-2 flex min-h-6 items-center justify-between gap-1">
+                        <span className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-sm font-semibold ${
+                          isToday ? "bg-[#6b5ce7] text-white" : isCurrentMonth ? "text-slate-700" : "text-slate-300"
+                        }`}>
+                          {date.getDate()}
+                        </span>
+                        {isToday && (
+                          <span className="rounded-full bg-[#6b5ce7]/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-[#5b49d6]">
+                            {t("agenda.currentDay")}
+                          </span>
+                        )}
                       </div>
                       <div className="space-y-1">
                         {dayAppointments.slice(0, 4).map((appointment) => (
                           <button
                             key={appointment.id}
                             type="button"
-                            onClick={() => setDetailTarget(appointment)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetailTarget(appointment);
+                            }}
                             className={`block w-full truncate rounded-lg border px-2 py-1.5 text-left text-[11px] font-medium ${statusClass(
                               appointment.status,
                             )}`}
+                            style={statusStyle(appointment.status, appointmentStatusColors)}
                           >
                             {appointment.time} · {appointment.patientName || "Patient"}
                           </button>
@@ -919,11 +891,14 @@ export default function AgendaView() {
                     <button
                       key={appointment.id}
                       type="button"
-                      onClick={() => setDetailTarget(appointment)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDetailTarget(appointment);
+                      }}
                       className="flex w-full flex-col gap-3 px-5 py-4 text-left transition hover:bg-slate-50 md:flex-row md:items-center md:justify-between"
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`h-3 w-3 rounded-full ${statusClass(appointment.status).split(" ")[3]}`} />
+                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: appointmentStatusColors[appointment.status] }} />
                         <div>
                           <div className="font-semibold text-slate-800">
                             {appointment.patientName || "Patient"}
@@ -970,7 +945,7 @@ export default function AgendaView() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="inline-flex items-center gap-2 rounded-full bg-[#ede9fe] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#6b5ce7]">
-                        {appointment.status === 'CONFIRMED' ? 'Confirmé' : 'En attente'}
+                        {STATUS_LABELS[appointment.status]}
                       </span>
 
                       <button
@@ -1041,7 +1016,8 @@ export default function AgendaView() {
                     >
                       <span className="inline-flex items-center gap-2">
                         <span
-                          className={`h-2 w-2 rounded-full ${statusDotClass(status)}`}
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: appointmentStatusColors[status] }}
                         />
                         {label}
                       </span>
@@ -1049,14 +1025,6 @@ export default function AgendaView() {
                     </div>
                   ))}
                 </div>
-              </div>
-
-              <div className="mt-4 flex items-center justify-between rounded-xl border border-[#e6eaf2] bg-white px-3 py-2.5 text-sm text-slate-600 shadow-sm">
-              <span>Filtre actif</span>
-              <button type="button" className="inline-flex items-center gap-2 font-medium text-slate-700">
-                {selectedChair}
-                <Icon name="chevronDown" size={16} />
-              </button>
               </div>
             </section>
           </aside>
@@ -1071,12 +1039,6 @@ export default function AgendaView() {
         {error && (
           <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
-          </div>
-        )}
-
-        {importMessage && (
-          <div className="mt-4 whitespace-pre-line rounded-xl border border-[#cdebdc] bg-[#effcf4] px-4 py-3 text-sm text-[#18734a]">
-            {importMessage}
           </div>
         )}
 
@@ -1131,6 +1093,7 @@ export default function AgendaView() {
                         className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(
                           detailTarget.status,
                         )}`}
+                        style={statusStyle(detailTarget.status, appointmentStatusColors)}
                       >
                         {STATUS_LABELS[detailTarget.status]}
                       </span>
@@ -1203,13 +1166,17 @@ export default function AgendaView() {
               </div>
 
               <div className="flex flex-wrap justify-end gap-3 border-t border-[#edf1f7] px-6 py-5">
-                <button
-                  type="button"
-                  onClick={() => void changeDetailStatus("IN_CONSULTATION")}
-                  className="rounded-xl border border-[#d8c5ff] bg-[#f2eaff] px-4 py-2.5 text-sm font-semibold text-[#7048c9] transition hover:bg-[#e8dcff]"
-                >
-                  En consultation
-                </button>
+                {STATUS_ACTIONS.map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => void changeDetailStatus(status)}
+                    className="rounded-xl border px-4 py-2.5 text-sm font-semibold transition"
+                    style={statusStyle(status, appointmentStatusColors)}
+                  >
+                    {STATUS_LABELS[status]}
+                  </button>
+                ))}
                 <button
                   type="button"
                   onClick={() => openRescheduleModal(detailTarget)}
@@ -1225,34 +1192,6 @@ export default function AgendaView() {
                 >
                   <Icon name="edit" size={16} />
                   Modifier
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void changeDetailStatus("CANCELLED")}
-                  className="rounded-xl border border-[#fecaca] bg-white px-4 py-2.5 text-sm font-semibold text-[#c2413a] transition hover:bg-[#fff7f7]"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void changeDetailStatus("NO_SHOW")}
-                  className="rounded-xl border border-[#d1d5db] bg-[#f3f4f6] px-4 py-2.5 text-sm font-semibold text-[#4b5563] transition hover:bg-[#e5e7eb]"
-                >
-                  Absent
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void changeDetailStatus("ARRIVED")}
-                  className="rounded-xl border border-[#f8d99a] bg-[#fff7df] px-4 py-2.5 text-sm font-semibold text-[#a76507] transition hover:bg-[#ffefc2]"
-                >
-                  Marquer arrivé
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void changeDetailStatus("CONFIRMED")}
-                  className="rounded-xl bg-[#1f9d67] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_16px_rgba(31,157,103,0.2)] transition hover:bg-[#178653]"
-                >
-                  ✓ Confirmer
                 </button>
               </div>
             </div>
@@ -1406,6 +1345,40 @@ export default function AgendaView() {
           </div>
         )}
 
+        {patientModalOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/35 p-4">
+            <div className="w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.25)]">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-800">Nouveau patient</h2>
+                  <p className="mt-1 text-sm text-slate-500">Créez le dossier avant d’enregistrer le rendez-vous.</p>
+                </div>
+                <button type="button" onClick={() => setPatientModalOpen(false)} className="text-2xl text-slate-400 hover:text-slate-600" aria-label="Fermer">×</button>
+              </div>
+              <form onSubmit={handleCreatePatient} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-sm font-medium text-slate-700">Prénom
+                    <input required value={newPatient.firstName} onChange={(event) => setNewPatient({ ...newPatient, firstName: event.target.value })} className="mt-1 w-full rounded-xl border border-[#dfe7f2] px-3 py-2.5 text-sm outline-none focus:border-[#b9c9f3]" />
+                  </label>
+                  <label className="text-sm font-medium text-slate-700">Nom
+                    <input required value={newPatient.lastName} onChange={(event) => setNewPatient({ ...newPatient, lastName: event.target.value })} className="mt-1 w-full rounded-xl border border-[#dfe7f2] px-3 py-2.5 text-sm outline-none focus:border-[#b9c9f3]" />
+                  </label>
+                </div>
+                <label className="block text-sm font-medium text-slate-700">Téléphone
+                  <input required value={newPatient.phone} onChange={(event) => setNewPatient({ ...newPatient, phone: event.target.value })} className="mt-1 w-full rounded-xl border border-[#dfe7f2] px-3 py-2.5 text-sm outline-none focus:border-[#b9c9f3]" />
+                </label>
+                <label className="block text-sm font-medium text-slate-700">Date de naissance
+                  <input type="date" value={newPatient.dateOfBirth} onChange={(event) => setNewPatient({ ...newPatient, dateOfBirth: event.target.value })} className="mt-1 w-full rounded-xl border border-[#dfe7f2] px-3 py-2.5 text-sm outline-none focus:border-[#b9c9f3]" />
+                </label>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={() => setPatientModalOpen(false)} className="rounded-xl border border-[#dfe7f2] px-4 py-2.5 text-sm font-medium text-slate-700">Annuler</button>
+                  <button type="submit" disabled={patientSaving} className="rounded-xl bg-[#6b5ce7] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{patientSaving ? "Création..." : "Créer et sélectionner"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {modalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4">
             <div className="w-full max-w-xl rounded-[24px] bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.25)]">
@@ -1436,22 +1409,15 @@ export default function AgendaView() {
               <form onSubmit={handleCreate} className="space-y-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                    Patient
+                    Patient <span className="text-rose-500">*</span>
                   </label>
 
-                  <select
-                    required
-                    value={form.patientId}
-                    onChange={(e) => setForm({ ...form, patientId: e.target.value })}
-                    className="w-full rounded-xl border border-[#dfe7f2] bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#b9c9f3]"
-                  >
-                    <option value="">Sélectionner un patient</option>
-                    {patients.map((patient) => (
-                      <option key={patient.id} value={patient.id}>
-                        {patient.firstName} {patient.lastName} — {patient.patientNumber}
-                      </option>
-                    ))}
-                  </select>
+                  <PatientCombobox
+                    patients={patients}
+                    selectedPatientId={form.patientId}
+                    onSelectPatient={(patientId) => setForm({ ...form, patientId })}
+                    onNewPatientClick={() => setPatientModalOpen(true)}
+                  />
                 </div>
 
                 <div>
@@ -1517,6 +1483,7 @@ export default function AgendaView() {
                     </label>
 
                     <select
+                      required
                       value={form.chairId}
                       onChange={(e) => setForm({ ...form, chairId: e.target.value })}
                       className="w-full rounded-xl border border-[#dfe7f2] bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#b9c9f3]"
@@ -1533,6 +1500,7 @@ export default function AgendaView() {
                     </label>
 
                     <select
+                      required
                       value={form.durationMinutes}
                       onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })}
                       className="w-full rounded-xl border border-[#dfe7f2] bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#b9c9f3]"
@@ -1553,6 +1521,7 @@ export default function AgendaView() {
                   </label>
 
                   <select
+                    required
                     value={form.type}
                     onChange={(e) => setForm({ ...form, type: e.target.value })}
                     className="w-full rounded-xl border border-[#dfe7f2] bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#b9c9f3]"

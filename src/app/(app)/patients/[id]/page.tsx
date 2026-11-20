@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/server/auth/session";
 import { HttpError } from "@/server/http";
+import { canAccess } from "@/server/auth/access-control";
 import * as service from "@/server/modules/patients/patients.service";
 import { PatientDetailView } from "@/features/patients/components/PatientDetailView";
 import type { PatientDetail } from "@/features/patients/types";
@@ -12,6 +13,7 @@ export default async function PatientPage({ params }: { params: Promise<{ id: st
 
   const session = await getSession();
   if (!session) redirect("/login");
+  if (!(await canAccess(session, { module: "patients", action: "view" }))) redirect("/");
 
   let patient: PatientDetail;
   try {
@@ -21,5 +23,5 @@ export default async function PatientPage({ params }: { params: Promise<{ id: st
     throw error;
   }
 
-  return <PatientDetailView patient={patient} canArchive={["ADMIN", "DENTIST"].includes(session.role)} />;
+  return <PatientDetailView patient={patient} canArchive={await canAccess(session, { module: "patients", action: "delete" })} />;
 }

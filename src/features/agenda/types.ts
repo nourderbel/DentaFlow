@@ -1,6 +1,5 @@
 export type AppointmentStatus =
   | "PENDING"
-  | "PLANNED"
   | "CONFIRMED"
   | "ARRIVED"
   | "IN_CONSULTATION"
@@ -29,6 +28,7 @@ export type Patient = {
   patientNumber: string;
   firstName: string;
   lastName: string;
+  phone?: string;
 };
 
 export type Practitioner = {

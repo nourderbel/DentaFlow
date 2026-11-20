@@ -8,49 +8,58 @@ import { formatDate, formatMoney } from "@/lib/format";
 import { fetchAppointments } from "@/features/agenda/api";
 import type { Appointment } from "@/features/agenda/types";
 import type { Practitioner } from "@/features/agenda/types";
-import type { PatientListItem } from "@/features/patients/types";
+
+type DashboardReceivables = {
+  totalReceivable: string | number;
+  debtorCount: number;
+  activePatientCount: number;
+};
 
 function todayValue() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function monthRange() {
+function activityRange() {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const value = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return { from: value(start), to: value(end) };
 }
 
-export function DashboardView({ userName, role }: { userName: string; role: string }) {
+export function DashboardView({ userName }: { userName: string }) {
   const { t, locale } = useI18n();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [patients, setPatients] = useState<PatientListItem[]>([]);
+  const [receivables, setReceivables] = useState<DashboardReceivables>({
+    totalReceivable: 0,
+    debtorCount: 0,
+    activePatientCount: 0,
+  });
   const [practitioners, setPractitioners] = useState<Practitioner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const today = todayValue();
-  const range = monthRange();
+  const range = activityRange();
 
   useEffect(() => {
     let active = true;
     Promise.all([
       fetchAppointments(range.from, range.to),
-      fetch("/api/patients", { cache: "no-store" }).then(async (response) => {
+      fetch("/api/patients/receivables", { cache: "no-store" }).then(async (response) => {
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error ?? "Chargement impossible.");
-        return body.data as PatientListItem[];
+        if (!response.ok) throw new Error(body.error ?? "Chargement des indicateurs patients impossible.");
+        return body as DashboardReceivables;
       }),
       fetch("/api/practitioners", { cache: "no-store" }).then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Chargement des praticiens impossible.");
         return body.data as Practitioner[];
       }),
-    ]).then(([todayAppointments, patientRows, practitionerRows]) => {
+    ]).then(([todayAppointments, receivablesSummary, practitionerRows]) => {
       if (!active) return;
       setAppointments(todayAppointments);
-      setPatients(patientRows);
+      setReceivables(receivablesSummary);
       setPractitioners(practitionerRows);
     }).catch((reason) => {
       if (active) setError(reason instanceof Error ? reason.message : "Chargement impossible.");
@@ -80,19 +89,20 @@ export function DashboardView({ userName, role }: { userName: string; role: stri
       patientCount: new Set(doctorAppointments.map((appointment) => appointment.patientId)).size,
     };
   });
-  const receivables = patients.reduce((sum, patient) => sum + Math.max(Number(patient.balance) || 0, 0), 0);
+  const totalReceivable = Number(receivables.totalReceivable) || 0;
   const monthlyTrend = useMemo(() => {
-    const days = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const now = new Date();
     return Array.from({ length: 12 }, (_, index) => {
-      const from = Math.floor((index * days) / 12) + 1;
-      const to = Math.floor(((index + 1) * days) / 12);
-      return appointments.filter((item) => {
-        const day = Number(item.date.slice(8, 10));
-        return day >= from && day <= to;
-      }).length;
+      const month = new Date(now.getFullYear(), now.getMonth() - 11 + index, 1);
+      const key = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+      return {
+        key,
+        label: new Intl.DateTimeFormat(locale === "ar" ? "ar-TN" : "fr-FR", { month: "short" }).format(month),
+        count: appointments.filter((item) => item.date.startsWith(key)).length,
+      };
     });
-  }, [appointments]);
-  const maxTrend = Math.max(...monthlyTrend);
+  }, [appointments, locale]);
+  const maxTrend = Math.max(...monthlyTrend.map((item) => item.count));
   const dateLabel = new Intl.DateTimeFormat(locale === "ar" ? "ar-TN" : "fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
 
   return (
@@ -105,36 +115,18 @@ export function DashboardView({ userName, role }: { userName: string; role: stri
 
       {error && <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</p>}
 
-      {role === "ADMIN" && (
-        <section className="rounded-2xl border border-accent/20 bg-gradient-to-r from-violet-50 to-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="font-bold text-ink">{locale === "ar" ? "إدارة العيادة" : "Administration du cabinet"}</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                {locale === "ar" ? "إدارة الأطباء والسكرتير والإعدادات ومؤشرات العيادة." : "Gérez les médecins, les secrétaires, les paramètres et les indicateurs du cabinet."}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link href="/team" className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition hover:brightness-105">
-                {locale === "ar" ? "الفريق والصلاحيات" : "Médecins & secrétaires"}
-              </Link>
-              <Link href="/settings" className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-accent hover:text-accent">
-                {locale === "ar" ? "إعدادات العيادة" : "Paramètres du cabinet"}
-              </Link>
-              <Link href="/reports" className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-accent hover:text-accent">
-                {locale === "ar" ? "التقارير والرسوم" : "Rapports & graphiques"}
-              </Link>
-            </div>
-          </div>
-        </section>
-      )}
-
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric icon="calendar" label={locale === "ar" ? "مواعيد اليوم" : "Rendez-vous aujourd'hui"} value={loading ? "—" : String(todayAppointments.length)} detail={`${completed} ${locale === "ar" ? "مكتمل" : "terminé(s)"}`} tone="violet" />
         <Metric icon="patients" label={locale === "ar" ? "المرضى المنتظرون" : "Patients attendus"} value={loading ? "—" : String(pending.length)} detail={pending[0] ? `${pending[0].time} · ${pending[0].patientName}` : t("common.none")} tone="green" />
-        <Metric icon="creditCard" label={locale === "ar" ? "المرضى المسجلون" : "Patients enregistrés"} value={loading ? "—" : String(patients.length)} detail={locale === "ar" ? "ملفات نشطة" : "dossiers actifs"} tone="amber" />
-        <Metric icon="file" label={locale === "ar" ? "المبالغ المستحقة" : "Créances patients"} value={loading ? "—" : formatMoney(receivables)} detail={`${patients.filter((patient) => Number(patient.balance) > 0).length} ${locale === "ar" ? "مرضى معنيون" : "patients concernés"}`} tone="rose" />
+        <Metric icon="creditCard" label={locale === "ar" ? "المرضى المسجلون" : "Patients enregistrés"} value={loading ? "—" : String(receivables.activePatientCount)} detail={locale === "ar" ? "ملفات نشطة" : "dossiers actifs"} tone="amber" />
+        <Metric icon="file" label={locale === "ar" ? "المبالغ المستحقة" : "Créances patients"} value={loading ? "—" : formatMoney(totalReceivable)} detail={`${receivables.debtorCount} ${locale === "ar" ? "مرضى معنيون" : "patients concernés"}`} tone="rose" />
       </div>
+
+      <p className="text-xs text-slate-500">
+        {locale === "ar"
+          ? "المؤشرات أعلاه تعرض النشاط الإجمالي للعيادة. يمكن تصفية الرسم البياني أدناه حسب الطبيب."
+          : "Les indicateurs ci-dessus montrent l’activité globale du cabinet. La courbe ci-dessous peut être filtrée par médecin."}
+      </p>
 
       <section className="rounded-2xl border border-line bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -149,14 +141,21 @@ export function DashboardView({ userName, role }: { userName: string; role: stri
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)]">
         <section className="rounded-2xl border border-line bg-white p-5 shadow-sm transition duration-200 ease-out hover:-translate-y-0.5 hover:border-accent/25 hover:shadow-[0_12px_28px_rgba(108,92,231,0.10)] motion-reduce:transition-none motion-reduce:hover:translate-y-0">
-          <div className="flex items-start justify-between">
-            <div><h2 className="font-bold text-ink">{locale === "ar" ? "نشاط العيادة" : "Activité du cabinet"}</h2><p className="mt-1 text-xs text-slate-400">{locale === "ar" ? "نظرة عامة على المواعيد" : "Évolution des rendez-vous"}</p></div>
-            <span className="rounded-lg bg-accent/10 px-2.5 py-1.5 text-xs font-semibold text-accent">{locale === "ar" ? "هذا الشهر" : "Ce mois"}</span>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-ink">
+                {locale === "ar" ? "النشاط الإجمالي للعيادة" : "Activité globale du cabinet"}
+              </h2>
+              <p className="mt-1 text-xs text-slate-400">{locale === "ar" ? "تطور المواعيد خلال آخر 12 شهرا" : "Évolution des rendez-vous sur les 12 derniers mois"}</p>
+            </div>
+            <span className="rounded-lg bg-accent/10 px-2.5 py-1.5 text-xs font-semibold text-accent">{locale === "ar" ? "12 شهرا" : "12 mois"}</span>
           </div>
-          <div className="mt-6 flex h-52 items-end gap-2 border-b border-line px-2">
-            {monthlyTrend.map((value, index) => <div key={index} className="group flex flex-1 flex-col items-center justify-end gap-2"><span className="hidden text-[10px] text-slate-400 group-hover:block">{value}</span><div className="w-full max-w-8 rounded-t-md bg-accent/75 transition hover:bg-accent" style={{ height: `${(value / maxTrend) * 100}%` }} /></div>)}
+          <div className="mt-6 flex h-44 items-end gap-2 border-b border-line px-2" role="img" aria-label={locale === "ar" ? "عدد المواعيد لكل شهر خلال الاثني عشر شهرا الماضية" : "Nombre de rendez-vous par mois sur les douze derniers mois"}>
+            {monthlyTrend.map(({ key, label: monthLabel, count }) => <div key={key} title={`${monthLabel} : ${count} ${locale === "ar" ? "موعد" : "rendez-vous"}`} aria-label={`${monthLabel} : ${count}`} className="group flex h-full min-w-0 flex-1 items-end justify-center"><div className="w-full max-w-8 rounded-t-md bg-accent/75 transition hover:bg-accent" style={{ height: maxTrend ? `${count ? Math.max(4, (count / maxTrend) * 100) : 0}%` : "0%" }} /></div>)}
           </div>
-          <div className="mt-3 flex justify-between text-[10px] text-slate-400"><span>{locale === "ar" ? "بداية الشهر" : "Début du mois"}</span><span>{locale === "ar" ? "نهاية الشهر" : "Fin du mois"}</span></div>
+          <div className="mt-2 grid grid-cols-12 gap-2 text-center text-[9px] text-slate-400">
+            {monthlyTrend.map(({ key, label: monthLabel }) => <span key={key}>{monthLabel}</span>)}
+          </div>
         </section>
 
         <section className="rounded-2xl border border-line bg-white p-5 shadow-sm transition duration-200 ease-out hover:-translate-y-0.5 hover:border-accent/25 hover:shadow-[0_12px_28px_rgba(108,92,231,0.10)] motion-reduce:transition-none motion-reduce:hover:translate-y-0">
@@ -175,7 +174,7 @@ export function DashboardView({ userName, role }: { userName: string; role: stri
         </section>
         <section className="rounded-2xl border border-line bg-white p-5 shadow-sm transition duration-200 ease-out hover:-translate-y-0.5 hover:border-accent/25 hover:shadow-[0_12px_28px_rgba(108,92,231,0.10)] motion-reduce:transition-none motion-reduce:hover:translate-y-0">
           <div className="flex items-center justify-between"><h2 className="font-bold text-ink">{locale === "ar" ? "تنبيهات" : "À surveiller"}</h2><Icon name="bell" size={18} className="text-amber-500" /></div>
-          <div className="mt-4 space-y-3 text-sm"><Alert icon="creditCard" text={`${patients.filter((patient) => Number(patient.balance) > 0).length} ${locale === "ar" ? "ملفات بها رصيد مستحق" : "patients avec un solde"}`} /><Alert icon="clock" text={`${pending.length} ${locale === "ar" ? "مواعيد قادمة" : "rendez-vous à venir"}`} /><Alert icon="check" text={`${completed} ${locale === "ar" ? "مواعيد مكتملة اليوم" : "rendez-vous terminés aujourd'hui"}`} /></div>
+          <div className="mt-4 space-y-3 text-sm"><Alert icon="creditCard" text={`${receivables.debtorCount} ${locale === "ar" ? "ملفات بها رصيد مستحق" : "patients avec une créance vérifiée"}`} /><Alert icon="clock" text={`${pending.length} ${locale === "ar" ? "مواعيد قادمة" : "rendez-vous à venir"}`} /><Alert icon="check" text={`${completed} ${locale === "ar" ? "مواعيد مكتملة اليوم" : "rendez-vous terminés aujourd'hui"}`} /></div>
         </section>
       </div>
     </div>

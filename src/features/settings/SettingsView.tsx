@@ -5,6 +5,8 @@ import type { ChangeEvent } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
 import { useI18n } from "@/lib/i18n";
+import type { AppointmentStatus } from "@/features/agenda/types";
+import { APPOINTMENT_STATUS_COLOR_DEFAULTS, APPOINTMENT_STATUS_LABELS } from "@/features/agenda/status-colors";
 
 type Tab = "cabinet" | "appearance" | "numbering" | "security" | "exports";
 type Settings = {
@@ -13,6 +15,7 @@ type Settings = {
   cinLength: string; taxProfile: string; compactMode: boolean; notifications: boolean;
   accentColor: string; backgroundColor: string; surfaceColor: string; textColor: string;
   successColor: string; warningColor: string; errorColor: string; animations: boolean; autoSave: boolean;
+  appointmentStatusColors: Record<AppointmentStatus, string>;
   patientPrefix: string; quotePrefix: string; invoicePrefix: string; receiptPrefix: string; laboratoryPrefix: string;
   twoFactorAuth: boolean; inactivityLogout: boolean; activityLog: boolean; encryptedBackup: boolean;
 };
@@ -33,23 +36,42 @@ const initialSettings: Settings = {
   taxProfile: "", compactMode: false, notifications: true,
   accentColor: "#6c5ce7", backgroundColor: "#f5f7fb", surfaceColor: "#ffffff", textColor: "#172b4d",
   successColor: "#2fa77e", warningColor: "#e89a2d", errorColor: "#df6674", animations: true, autoSave: true,
+  appointmentStatusColors: APPOINTMENT_STATUS_COLOR_DEFAULTS,
   patientPrefix: "PAT", quotePrefix: "DEV", invoicePrefix: "FAC", receiptPrefix: "REC", laboratoryPrefix: "LAB",
   twoFactorAuth: true, inactivityLogout: true, activityLog: true, encryptedBackup: false,
 };
 
-const storageKey = "dentaflow-settings";
+const storageKey = "dentaclinic-settings";
+const legacyStorageKey = "dentaflow-settings";
 
-export function SettingsView() {
+export function SettingsView({
+  canEdit = true,
+  canViewTeam = false,
+  canManageTeam = false,
+}: {
+  canEdit?: boolean;
+  canViewTeam?: boolean;
+  canManageTeam?: boolean;
+}) {
   const { locale, setLocale } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("cabinet");
   const [settings, setSettings] = useState<Settings>(() => {
     if (typeof window === "undefined") return initialSettings;
-    try { return { ...initialSettings, ...JSON.parse(window.localStorage.getItem(storageKey) ?? "{}") }; } catch { return initialSettings; }
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(legacyStorageKey) ?? "{}");
+      return {
+        ...initialSettings,
+        ...stored,
+        appointmentStatusColors: { ...APPOINTMENT_STATUS_COLOR_DEFAULTS, ...stored.appointmentStatusColors },
+      };
+    } catch { return initialSettings; }
   });
   const [saved, setSaved] = useState(false);
   const [data, setData] = useState<SettingsData>({ user: null, team: [], counts: {}, records: {}, database: { status: "loading" }, error: "" });
   const label = (fr: string, ar: string) => locale === "ar" ? ar : fr;
-  const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings((current) => ({ ...current, [key]: value }));
+  const update = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    if (canEdit) setSettings((current) => ({ ...current, [key]: value }));
+  };
 
   useEffect(() => {
     document.documentElement.style.setProperty("--color-accent", settings.accentColor);
@@ -68,22 +90,29 @@ export function SettingsView() {
     let cancelled = false;
     async function loadData() {
       try {
-        const responses = await Promise.all([
-          fetch("/api/auth/me"),
-          fetch("/api/team"),
-          fetch("/api/patients?q="),
-          fetch("/api/appointments?from=2020-01-01&to=2100-12-31"),
-          fetch("/api/consultations"),
-          fetch("/api/treatments"),
-          fetch("/api/health"),
-        ]);
+        const urls = [
+          "/api/auth/me",
+          ...(canViewTeam ? ["/api/team"] : []),
+          "/api/patients?q=",
+          "/api/appointments?from=2020-01-01&to=2100-12-31",
+          "/api/consultations",
+          "/api/treatments",
+          "/api/health",
+        ];
+        const responses = await Promise.all(urls.map((url) => fetch(url)));
         const payloads = await Promise.all(responses.map(async (response) => {
           const payload = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(payload.error ?? `Erreur HTTP ${response.status}`);
-          return payload;
+          return response.ok ? payload : null;
         }));
         if (cancelled) return;
-        const [me, team, patients, appointments, consultations, treatments, health] = payloads;
+        let payloadIndex = 0;
+        const me = payloads[payloadIndex++];
+        const team = canViewTeam ? payloads[payloadIndex++] : null;
+        const patients = payloads[payloadIndex++];
+        const appointments = payloads[payloadIndex++];
+        const consultations = payloads[payloadIndex++];
+        const treatments = payloads[payloadIndex++];
+        const health = payloads[payloadIndex++];
         const localCounts: Record<string, number> = {};
         for (const dataset of exportDatasets) {
           const stored = window.localStorage.getItem(dataset.storageKey);
@@ -96,29 +125,29 @@ export function SettingsView() {
           }
         }
         setData({
-          user: me.user,
-          team: team.data ?? [],
+          user: me?.user ?? null,
+          team: team?.data ?? [],
           counts: {
             ...localCounts,
-            patients: patients.data?.length ?? 0,
-            appointments: appointments.data?.length ?? 0,
-            consultations: consultations.data?.length ?? 0,
-            treatments: treatments.data?.length ?? 0,
-            users: team.data?.length ?? 0,
+            patients: patients?.data?.length ?? 0,
+            appointments: appointments?.data?.length ?? 0,
+            consultations: consultations?.data?.length ?? 0,
+            treatments: treatments?.data?.length ?? 0,
+            users: team?.data?.length ?? 0,
           },
           records: {
-            patients: patients.data ?? [],
-            appointments: appointments.data ?? [],
-            consultations: consultations.data ?? [],
-            treatments: treatments.data ?? [],
-            users: team.data ?? [],
+            patients: patients?.data ?? [],
+            appointments: appointments?.data ?? [],
+            consultations: consultations?.data ?? [],
+            treatments: treatments?.data ?? [],
+            users: team?.data ?? [],
           },
-          database: { status: health.database, version: health.version },
+          database: { status: health?.database ?? "unavailable", version: health?.version },
           error: "",
         });
         setSettings((current) => ({
           ...current,
-          email: current.email || me.user?.email || "",
+          email: current.email || me?.user?.email || "",
         }));
       } catch (error) {
         if (!cancelled) setData((current) => ({ ...current, database: { status: "unavailable" }, error: error instanceof Error ? error.message : "Impossible de charger les données." }));
@@ -126,7 +155,7 @@ export function SettingsView() {
     }
     void loadData();
     return () => { cancelled = true; };
-  }, []);
+  }, [canViewTeam]);
 
   function save() {
     window.localStorage.setItem(storageKey, JSON.stringify(settings));
@@ -145,24 +174,24 @@ export function SettingsView() {
   return <div className="space-y-5">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="text-2xl font-bold tracking-tight text-ink">{label("Paramètres", "الإعدادات")}</h1><p className="mt-1 text-sm text-slate-500">{label("Personnalisez le fonctionnement, l’identité et les préférences du cabinet.", "خصص طريقة العمل وهوية وتفضيلات العيادة.")}</p>{data.user && <p className="mt-1 text-[10px] text-slate-400">{data.user.name} · {data.user.role}</p>}</div>
-      <Button variant="primary" onClick={save}><Icon name="check" size={14} /> {label("Enregistrer les paramètres", "حفظ الإعدادات")}</Button>
+      <Button variant="primary" onClick={save} disabled={!canEdit}><Icon name="check" size={14} /> {label("Enregistrer les paramètres", "حفظ الإعدادات")}</Button>
     </header>
     {saved && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{label("Les paramètres ont été enregistrés.", "تم حفظ الإعدادات.")}</p>}
     {data.error && <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{label(`Impossible de charger les données existantes : ${data.error}`, `تعذر تحميل البيانات الموجودة: ${data.error}`)}</p>}
     <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
       <nav className="h-fit rounded-2xl border border-line bg-white p-2 shadow-sm">{tabs.map((tab) => <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold transition ${activeTab === tab.id ? "bg-violet-50 text-violet-700" : "text-slate-500 hover:bg-slate-50"}`}><Icon name={tab.icon} size={14} />{label(tab.fr, tab.ar)}</button>)}</nav>
       <main className="space-y-4">
-        {activeTab === "cabinet" && <CabinetSection settings={settings} update={update} label={label} user={data.user} />}
+        {activeTab === "cabinet" && <CabinetSection settings={settings} update={update} label={label} />}
         {activeTab === "appearance" && <AppearanceSection settings={settings} update={update} locale={locale} setLocale={setLocale} label={label} />}
         {activeTab === "numbering" && <NumberingSection settings={settings} update={update} label={label} />}
-        {activeTab === "security" && <SecuritySection settings={settings} update={update} label={label} team={data.team} />}
+        {activeTab === "security" && <SecuritySection settings={settings} update={update} label={label} team={data.team} canManageTeam={canManageTeam} />}
         {activeTab === "exports" && <ExportsSection label={label} counts={data.counts} records={data.records} database={data.database} />}
       </main>
     </div>
   </div>;
 }
 
-function CabinetSection({ settings, update, label, user }: { settings: Settings; update: <K extends keyof Settings>(key: K, value: Settings[K]) => void; label: (fr: string, ar: string) => string; user: SettingsData["user"] }) {
+function CabinetSection({ settings, update, label }: { settings: Settings; update: <K extends keyof Settings>(key: K, value: Settings[K]) => void; label: (fr: string, ar: string) => string }) {
   return <><section className="rounded-2xl border border-line bg-white p-5 shadow-sm"><SectionTitle title={label("Informations du cabinet", "معلومات العيادة")} subtitle={label("Ces coordonnées seront utilisées dans les impressions et les documents PDF.", "ستستخدم هذه البيانات في المطبوعات وملفات PDF.")} /><div className="grid gap-4 md:grid-cols-2"><Field label={label("Nom commercial", "الاسم التجاري")} value={settings.commercialName} onChange={(value) => update("commercialName", value)} /><Field label={label("Pays", "البلد")} value={settings.country} onChange={(value) => update("country", value)} /><Field className="md:col-span-2" label={label("Adresse", "العنوان")} value={settings.address} onChange={(value) => update("address", value)} /><Field label={label("Téléphone du cabinet", "هاتف العيادة")} value={settings.phone} onChange={(value) => update("phone", value)} /><Field label="E-mail" value={settings.email} onChange={(value) => update("email", value)} type="email" /><SelectField label={label("Gouvernorat", "الولاية")} value={settings.governorate} options={["Tunis", "Ariana", "Sousse", "Sfax", "Nabeul"]} onChange={(value) => update("governorate", value)} /><SelectField label={label("Devise", "العملة")} value={settings.currency} options={["TND — Dinar tunisien", "EUR — Euro", "USD — Dollar américain"]} onChange={(value) => update("currency", value)} /></div></section><section className="rounded-2xl border border-line bg-white p-5 shadow-sm"><SectionTitle title={label("Configuration locale tunisienne", "الإعدادات المحلية التونسية")} subtitle={label("Les champs sont adaptés à l’usage en Tunisie. Les règles fiscales restent configurables.", "الحقول مهيأة للاستخدام في تونس. القواعد الجبائية قابلة للتخصيص.")} /><div className="grid gap-4 md:grid-cols-2"><SelectField label={label("Format de date", "تنسيق التاريخ")} value={settings.dateFormat} options={["DD/MM/YYYY", "YYYY-MM-DD", "MM/DD/YYYY"]} onChange={(value) => update("dateFormat", value)} /><Field label={label("Masque téléphone", "قناع الهاتف")} value={settings.phoneMask} onChange={(value) => update("phoneMask", value)} /><Field label={label("Longueur CIN tunisienne", "طول بطاقة التعريف")} value={settings.cinLength} onChange={(value) => update("cinLength", value)} type="number" /><SelectField label={label("Profil fiscal", "الملف الجبائي")} value={settings.taxProfile} options={["Non configuré — définir avec votre comptable", "Assujetti TVA", "Non assujetti TVA"]} onChange={(value) => update("taxProfile", value)} /></div><p className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-xs text-blue-700"><Icon name="info" size={14} className="mr-2 inline" />{label("Aucun taux fiscal ni tarif de soin n’est codé en dur. Les champs restent paramétrables afin de suivre les évolutions locales.", "لا توجد نسب جبائية أو أسعار علاج ثابتة. الحقول قابلة للتخصيص لمتابعة التطورات المحلية.")}</p></section></>;
 }
 
@@ -176,6 +205,39 @@ function AppearanceSection({ settings, update, locale, setLocale, label }: { set
       <SectionTitle title={label("Couleurs de l’interface", "ألوان الواجهة")} subtitle={label("Personnalisez les couleurs principales et les états visuels du cabinet.", "خصص الألوان الرئيسية وحالات الواجهة.")} />
       <div className="flex flex-wrap items-center gap-3">{colors.map(([color, name]) => <button key={color} type="button" title={name} onClick={() => update("accentColor", color)} className={`h-7 w-7 rounded-lg border-2 transition hover:scale-110 ${settings.accentColor === color ? "border-white ring-2 ring-accent" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}<ColorInput label={label("Accent", "اللون الرئيسي")} value={settings.accentColor} onChange={(value) => update("accentColor", value)} /><ColorInput label={label("Fond", "الخلفية")} value={settings.backgroundColor} onChange={(value) => update("backgroundColor", value)} /><ColorInput label={label("Surface", "السطح")} value={settings.surfaceColor} onChange={(value) => update("surfaceColor", value)} /><ColorInput label={label("Texte", "النص")} value={settings.textColor} onChange={(value) => update("textColor", value)} /><ColorInput label={label("Succès", "نجاح")} value={settings.successColor} onChange={(value) => update("successColor", value)} /><ColorInput label={label("Alerte", "تنبيه")} value={settings.warningColor} onChange={(value) => update("warningColor", value)} /><ColorInput label={label("Erreur", "خطأ")} value={settings.errorColor} onChange={(value) => update("errorColor", value)} /></div>
       <div className="mt-5 flex flex-wrap gap-2"><Button variant="primary"><Icon name="check" size={13} /> {label("Action principale", "الإجراء الرئيسي")}</Button><Button>{label("Action secondaire", "إجراء ثانوي")}</Button><span className="rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-semibold text-emerald-700">● {label("Valide", "صالح")}</span><span className="rounded-full bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-700">● {label("À vérifier", "للتحقق")}</span><span className="rounded-full bg-rose-50 px-3 py-2 text-[10px] font-semibold text-rose-700">● {label("Alerte", "تنبيه")}</span></div>
+    </section>
+    <section className="rounded-2xl border border-line bg-white p-5 shadow-sm">
+      <SectionTitle
+        title={label("Couleurs des états de rendez-vous", "ألوان حالات المواعيد")}
+        subtitle={label("Choisissez une couleur pour chaque statut. Ces couleurs seront utilisées dans l’agenda sur cet appareil.", "اختر لوناً لكل حالة. ستظهر الألوان في جدول المواعيد على هذا الجهاز.")}
+      />
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(Object.keys(APPOINTMENT_STATUS_LABELS) as AppointmentStatus[]).map((status) => (
+          <div key={status} className="flex items-center justify-between gap-3 rounded-xl border border-line p-3">
+            <span className="min-w-0 truncate text-sm font-medium text-ink">{APPOINTMENT_STATUS_LABELS[status][locale]}</span>
+            <ColorInput
+              label={settings.appointmentStatusColors[status].toUpperCase()}
+              value={settings.appointmentStatusColors[status]}
+              onChange={(color) => update("appointmentStatusColors", { ...settings.appointmentStatusColors, [status]: color })}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {(Object.keys(APPOINTMENT_STATUS_LABELS) as AppointmentStatus[]).map((status) => (
+          <span
+            key={status}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold"
+            style={{
+              color: settings.appointmentStatusColors[status],
+              backgroundColor: `color-mix(in srgb, ${settings.appointmentStatusColors[status]} 12%, white)`,
+              boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${settings.appointmentStatusColors[status]} 30%, white)`,
+            }}
+          >
+            {APPOINTMENT_STATUS_LABELS[status][locale]}
+          </span>
+        ))}
+      </div>
     </section>
     <section className="rounded-2xl border border-line bg-white p-5 shadow-sm"><SectionTitle title={label("Langue et affichage", "اللغة والعرض")} subtitle={label("Français par défaut · l’arabe adapte le sens de lecture en RTL.", "الفرنسية افتراضيا · العربية تغير اتجاه القراءة إلى RTL.")} /><div className="grid gap-4 md:grid-cols-2"><SelectField label={label("Langue de l’interface", "لغة الواجهة")} value={locale === "ar" ? "العربية" : "Français"} options={["Français", "العربية"]} onChange={(value) => setLocale(value === "العربية" ? "ar" : "fr")} /><SelectField label={label("Langue future", "اللغة المستقبلية")} value="English — préparé pour une prochaine version" options={["English — préparé pour une prochaine version"]} onChange={() => undefined} /></div><div className="mt-4 border-t border-line pt-4"><Toggle label={label("Animations fluides", "رسوم متحركة سلسة")} checked={settings.animations} onChange={(value) => update("animations", value)} /><p className="mt-1 text-[10px] text-slate-400">{label("Transitions discrètes, sans ralentir les actions", "انتقالات بسيطة دون إبطاء الإجراءات")}</p></div><div className="mt-4 flex items-center justify-between border-t border-line pt-4"><div><p className="text-xs font-semibold text-ink">{label("Enregistrer automatiquement", "الحفظ التلقائي")}</p><p className="mt-1 text-[10px] text-slate-400">{label("Les modifications sont gardées sur cet appareil", "يتم حفظ التعديلات على هذا الجهاز")}</p></div><div className="flex items-center gap-3"><Toggle label="" checked={settings.autoSave} onChange={(value) => update("autoSave", value)} /><span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{settings.autoSave ? label("● Actif", "● نشط") : label("Inactif", "غير نشط")}</span></div></div></section>
   </div>;
@@ -195,13 +257,13 @@ function NumberingSection({ settings, update, label }: { settings: Settings; upd
     <p className="mt-5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500"><Icon name="info" size={14} className="mr-2 inline" />{label("Les séquences sont attribuées côté serveur dans une base connectée pour éviter les doublons multi-utilisateurs.", "يتم إنشاء التسلسلات على الخادم في قاعدة بيانات متصلة لتجنب التكرار بين المستخدمين.")}</p>
   </section>;
 }
-function SecuritySection({ settings, update, label, team }: { settings: Settings; update: <K extends keyof Settings>(key: K, value: Settings[K]) => void; label: (fr: string, ar: string) => string; team: SettingsData["team"] }) {
+function SecuritySection({ settings, update, label, team, canManageTeam }: { settings: Settings; update: <K extends keyof Settings>(key: K, value: Settings[K]) => void; label: (fr: string, ar: string) => string; team: SettingsData["team"]; canManageTeam: boolean }) {
   const [rolesOpen, setRolesOpen] = useState(false);
   const controls: { key: "twoFactorAuth" | "inactivityLogout" | "activityLog" | "encryptedBackup"; title: string; arabic: string; description: string; descriptionArabic: string }[] = [
-    { key: "twoFactorAuth", title: "Authentification à deux facteurs", arabic: "المصادقة الثنائية", description: "Recommandée pour les comptes dentiste et administrateur", descriptionArabic: "موصى بها لحسابات طبيب الأسنان والمدير" },
+    { key: "twoFactorAuth", title: "Authentification à deux facteurs", arabic: "المصادقة الثنائية", description: "Recommandée pour les comptes du cabinet", descriptionArabic: "موصى بها لحسابات العيادة" },
     { key: "inactivityLogout", title: "Déconnexion après inactivité", arabic: "تسجيل الخروج بعد عدم النشاط", description: "Fermer une session après 15 minutes sans activité", descriptionArabic: "إغلاق الجلسة بعد 15 دقيقة من عدم النشاط" },
     { key: "activityLog", title: "Journal d’activité", arabic: "سجل النشاط", description: "Conserver l’historique des modifications et accès", descriptionArabic: "الاحتفاظ بسجل التعديلات وعمليات الوصول" },
-    { key: "encryptedBackup", title: "Sauvegarde chiffrée", arabic: "نسخة احتياطية مشفرة", description: "Rétention et fréquence définies par l’administrateur", descriptionArabic: "يحدد المدير مدة الاحتفاظ وتكرار النسخ" },
+    { key: "encryptedBackup", title: "Sauvegarde chiffrée", arabic: "نسخة احتياطية مشفرة", description: "Rétention et fréquence définies par le cabinet", descriptionArabic: "تُحدد مدة الاحتفاظ وتكرار النسخ حسب العيادة" },
   ];
   const permissions = team.length > 0 ? Array.from(new Set(team.map((member) => member.role))) : [];
   return <div className="space-y-4">
@@ -212,7 +274,7 @@ function SecuritySection({ settings, update, label, team }: { settings: Settings
     <section className="rounded-2xl border border-line bg-white p-5 shadow-sm">
       <SectionTitle title={label("Permissions cliniques", "الصلاحيات السريرية")} subtitle={label("Les données de santé doivent être visibles uniquement par les utilisateurs autorisés.", "يجب أن تكون البيانات الصحية مرئية للمستخدمين المصرح لهم فقط.")} />
       <div className="flex flex-wrap gap-2">{permissions.map((permission) => <span key={permission} className="rounded bg-slate-50 px-2 py-1 text-[9px] font-medium text-slate-500">{label(permission, permission)}</span>)}</div>
-      <Button className="mt-4" onClick={() => setRolesOpen(true)}><Icon name="shield" size={14} /> {label("Gérer les rôles", "إدارة الأدوار")}</Button>
+      {canManageTeam && <Button className="mt-4" onClick={() => setRolesOpen(true)}><Icon name="shield" size={14} /> {label("Gérer les rôles", "إدارة الأدوار")}</Button>}
     </section>
     {rolesOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRolesOpen(false); }}><div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="roles-title"><div className="flex items-start justify-between gap-4"><div><h2 id="roles-title" className="font-bold text-ink">{label("Rôles et accès", "الأدوار والوصول")}</h2><p className="mt-1 text-xs text-slate-400">{label("Les utilisateurs et rôles du cabinet.", "مستخدمو وأدوار العيادة.")}</p></div><button type="button" aria-label={label("Fermer", "إغلاق")} onClick={() => setRolesOpen(false)} className="text-slate-400 hover:text-ink"><Icon name="x" size={16} /></button></div><div className="mt-4 space-y-2">{team.map((member) => <div key={member.id} className="flex items-center justify-between rounded-xl border border-line px-3 py-3 text-sm"><div><span className="font-semibold text-ink">{member.name}</span><p className="text-[10px] text-slate-400">{member.email}</p></div><span className={`text-[10px] font-semibold ${member.isActive ? "text-emerald-600" : "text-slate-400"}`}>{member.role} · {member.isActive ? label("Actif", "نشط") : label("Inactif", "غير نشط")}</span></div>)}{team.length === 0 && <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">{label("Aucun utilisateur retourné par l’API.", "لم تُرجع API أي مستخدم.")}</p>}</div><div className="mt-5 flex justify-end"><Button variant="primary" onClick={() => setRolesOpen(false)}>{label("Fermer", "إغلاق")}</Button></div></div></div>}
   </div>;
@@ -220,18 +282,18 @@ function SecuritySection({ settings, update, label, team }: { settings: Settings
 type ExportDataset = { id: string; name: string; arabic: string; storageKey: string };
 
 const exportDatasets: ExportDataset[] = [
-  { id: "patients", name: "Patients", arabic: "المرضى", storageKey: "dentaflow-patients" },
-  { id: "appointments", name: "Rendez-vous", arabic: "المواعيد", storageKey: "dentaflow-appointments" },
-  { id: "consultations", name: "Consultations", arabic: "الاستشارات", storageKey: "dentaflow-consultations" },
-  { id: "odontogram", name: "Odontogramme", arabic: "مخطط الأسنان", storageKey: "dentaflow-odontogram" },
-  { id: "treatments", name: "Traitements", arabic: "العلاجات", storageKey: "dentaflow-treatments" },
-  { id: "quotes", name: "Devis", arabic: "عروض الأسعار", storageKey: "dentaflow-quotes" },
-  { id: "invoices", name: "Factures", arabic: "الفواتير", storageKey: "dentaflow-invoices" },
-  { id: "treasury", name: "Paiements & trésorerie", arabic: "المدفوعات والخزينة", storageKey: "dentaflow-treasury-operations" },
-  { id: "stock", name: "Stock", arabic: "المخزون", storageKey: "dentaflow-stock-products" },
-  { id: "laboratory", name: "Laboratoire", arabic: "المختبر", storageKey: "dentaflow-laboratory-orders" },
-  { id: "suppliers", name: "Fournisseurs", arabic: "الموردون", storageKey: "dentaflow-suppliers" },
-  { id: "users", name: "Utilisateurs", arabic: "المستخدمون", storageKey: "dentaflow-users" },
+  { id: "patients", name: "Patients", arabic: "المرضى", storageKey: "dentaclinic-patients" },
+  { id: "appointments", name: "Rendez-vous", arabic: "المواعيد", storageKey: "dentaclinic-appointments" },
+  { id: "consultations", name: "Consultations", arabic: "الاستشارات", storageKey: "dentaclinic-consultations" },
+  { id: "odontogram", name: "Odontogramme", arabic: "مخطط الأسنان", storageKey: "dentaclinic-odontogram" },
+  { id: "treatments", name: "Traitements", arabic: "العلاجات", storageKey: "dentaclinic-treatments" },
+  { id: "quotes", name: "Devis", arabic: "عروض الأسعار", storageKey: "dentaclinic-quotes" },
+  { id: "invoices", name: "Factures", arabic: "الفواتير", storageKey: "dentaclinic-invoices" },
+  { id: "treasury", name: "Paiements & trésorerie", arabic: "المدفوعات والخزينة", storageKey: "dentaclinic-treasury-operations" },
+  { id: "stock", name: "Stock", arabic: "المخزون", storageKey: "dentaclinic-stock-products" },
+  { id: "laboratory", name: "Laboratoire", arabic: "المختبر", storageKey: "dentaclinic-laboratory-orders" },
+  { id: "suppliers", name: "Fournisseurs", arabic: "الموردون", storageKey: "dentaclinic-suppliers" },
+  { id: "users", name: "Utilisateurs", arabic: "المستخدمون", storageKey: "dentaclinic-users" },
 ];
 
 function csvCell(value: unknown) {
@@ -256,7 +318,7 @@ function ExportsSection({ label, counts, records, database }: { label: (fr: stri
   const [datasetRecords, setDatasetRecords] = useState(records);
 
   function exportCsv(dataset: ExportDataset) {
-    const stored = window.localStorage.getItem(dataset.storageKey);
+    const stored = window.localStorage.getItem(dataset.storageKey) ?? window.localStorage.getItem(dataset.storageKey.replace("dentaclinic", "dentaflow"));
     let value: unknown = [];
     try { value = datasetRecords[dataset.id] ?? (stored ? JSON.parse(stored) : []); } catch { value = [{ value: stored ?? "" }]; }
     const rows = Array.isArray(value) ? value : [value];
@@ -297,7 +359,7 @@ function ExportsSection({ label, counts, records, database }: { label: (fr: stri
       const key = window.localStorage.key(index);
       if (key) backup[key] = window.localStorage.getItem(key) ?? "";
     }
-    downloadFile("dentaflow-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), data: backup }, null, 2), "application/json");
+    downloadFile("dentaclinic-backup.json", JSON.stringify({ exportedAt: new Date().toISOString(), data: backup }, null, 2), "application/json");
     setMessage(label("La sauvegarde JSON a été téléchargée.", "تم تنزيل النسخة الاحتياطية JSON."));
   }
 

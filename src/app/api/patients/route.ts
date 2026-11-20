@@ -4,8 +4,10 @@ import { patientInputSchema } from "@/server/modules/patients/patients.schema";
 import * as service from "@/server/modules/patients/patients.service";
 
 export const GET = withAuth(async (request, session) => {
-  const search = new URL(request.url).searchParams.get("q") ?? "";
-  return NextResponse.json({ data: await service.listPatients(session, search) });
+  const params = new URL(request.url).searchParams;
+  const search = params.get("q") ?? "";
+  const archived = params.get("archived") === "true";
+  return NextResponse.json({ data: await service.listPatients(session, search, archived) });
 });
 
 export const POST = withAuth(

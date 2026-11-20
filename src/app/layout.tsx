@@ -15,14 +15,14 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "DentaFlow",
-    template: "%s | DentaFlow",
+    default: "DentaClinic",
+    template: "%s | DentaClinic",
   },
   description: "Gestion de cabinet dentaire",
   icons: {
-    icon: "/dentalflow-icon.svg",
-    shortcut: "/dentalflow-icon.svg",
-    apple: "/dentalflow-icon.svg",
+    icon: "/dentaclinic-icon.svg",
+    shortcut: "/dentaclinic-icon.svg",
+    apple: "/dentaclinic-icon.svg",
   },
 };
 

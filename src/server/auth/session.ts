@@ -1,13 +1,14 @@
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 
-export const SESSION_COOKIE = "dentaflow_session";
+export const SESSION_COOKIE = "dentaclinic_session";
+export const LEGACY_SESSION_COOKIE = "dentaflow_session";
 export const SESSION_SECONDS = 8 * 60 * 60; // 8 heures
 
 export type SessionClaims = { userId: number; tenantId: number; role: string };
 
 function getSecret(): string {
-  const secret = process.env.JWT_SECRET;
+  const secret = process.env.JWT_SECRET?.trim();
   if (!secret || secret.length < 32) {
     throw new Error("JWT_SECRET doit contenir au moins 32 caractères (voir .env.local)");
   }
@@ -22,7 +23,7 @@ export function verifySessionToken(token: string): SessionClaims | null {
   try {
     const p = jwt.verify(token, getSecret()) as jwt.JwtPayload;
     if (typeof p.userId !== "number" || typeof p.tenantId !== "number" || typeof p.role !== "string") return null;
-    return { userId: p.userId, tenantId: p.tenantId, role: p.role };
+    return { userId: p.userId, tenantId: p.tenantId, role: p.role.toUpperCase() };
   } catch {
     return null; // expiré, falsifié ou malformé
   }
@@ -30,6 +31,7 @@ export function verifySessionToken(token: string): SessionClaims | null {
 
 /** Lit le cookie de la requête en cours. À utiliser dans les routes API et les pages serveur. */
 export async function getSession(): Promise<SessionClaims | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE)?.value ?? cookieStore.get(LEGACY_SESSION_COOKIE)?.value;
   return token ? verifySessionToken(token) : null;
 }

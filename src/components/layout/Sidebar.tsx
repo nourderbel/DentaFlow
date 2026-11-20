@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { NAV_GROUPS } from "./nav";
 import { useI18n } from "@/lib/i18n";
 import { Icon } from "@/components/ui/Icon";
@@ -10,9 +11,24 @@ import { Icon } from "@/components/ui/Icon";
 export function Sidebar({ open, onClose, roleCode }: { open: boolean; onClose: () => void; roleCode: string }) {
   const pathname = usePathname();
   const { t } = useI18n();
+  const [viewableModules, setViewableModules] = useState<string[] | null>(null);
 
-  // "/" ne doit être actif que sur la page exacte ; "/patients" aussi pour "/patients/12"
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/auth/me", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.json())
+      .then((body: { viewableModules?: string[] }) => {
+        if (Array.isArray(body.viewableModules)) setViewableModules(body.viewableModules);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name !== "AbortError") console.error("Chargement des accès de navigation impossible.", error);
+      });
+    return () => controller.abort();
+  }, []);
+
+  // L'accueil ne correspond qu'à la racine ; les autres routes activent aussi leurs sous-pages.
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  const accessModule = (href: string) => href === "/" || href === "/dashboard" ? "dashboard" : href.slice(1);
 
   return (
     <>
@@ -26,18 +42,20 @@ export function Sidebar({ open, onClose, roleCode }: { open: boolean; onClose: (
         <Link
           href="/"
           onClick={onClose}
-          aria-label="DentaFlow - Dashboard"
+          aria-label="DentaClinic - Accueil"
           className="mb-6 flex items-center gap-2 rounded-lg px-3 text-xl font-bold text-ink transition hover:opacity-80"
         >
-          <Image src="/dentalflow-icon.svg" alt="" aria-hidden="true" width={36} height={36} className="h-9 w-9 rounded-xl" priority />
-          Denta<span className="text-accent">Flow</span>
+          <Image src="/dentaclinic-icon.svg" alt="" aria-hidden="true" width={36} height={36} className="h-9 w-9 rounded-xl" priority />
+          <span className="text-accent">DentaClinic</span>
         </Link>
 
         <nav className="flex-1 space-y-5 overflow-y-auto">
           {NAV_GROUPS.map((group) => (
             <div key={group.title}>
               <p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t(`nav.${group.title}`)}</p>
-              {group.items.map((item) => (
+              {group.items.filter((item) => {
+                return viewableModules === null || viewableModules.includes(accessModule(item.href));
+              }).map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}

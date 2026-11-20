@@ -5,7 +5,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: "cabinet",
     items: [
-      { href: "/", label: "dashboard", icon: "dashboard" },
+      { href: "/", label: "home", icon: "dashboard" },
+      { href: "/dashboard", label: "dashboard", icon: "chart" },
       { href: "/agenda", label: "agenda", icon: "calendar" },
       { href: "/patients", label: "patients", icon: "patients" },
       { href: "/consultations", label: "consultations", icon: "clipboard" },

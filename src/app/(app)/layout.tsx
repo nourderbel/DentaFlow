@@ -4,7 +4,6 @@ import { getPool } from "@/server/db";
 import { AppShell } from "@/components/layout/AppShell";
 
 const ROLE_LABELS: Record<string, string> = {
-  ADMIN: "Administrateur",
   DENTIST: "Dentiste",
   SECRETARY: "Secrétaire",
 };

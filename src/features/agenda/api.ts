@@ -75,6 +75,7 @@ export async function createAppointment(
       time: values.time,
       durationMinutes: Number(values.durationMinutes),
       type: values.type,
+      status: "PENDING",
       notes: values.notes || undefined,
     }),
   });

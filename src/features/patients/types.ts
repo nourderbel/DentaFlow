@@ -15,6 +15,7 @@ export type PatientListItem = {
   chronicConditions: string | null;
   balance: string; // DECIMAL renvoyé en texte par MariaDB
   lastVisit: string | null;
+  archivedAt?: string | null;
 };
 
 /** Fiche complète : liste + champs administratifs et médicaux. */

@@ -20,5 +20,28 @@ export async function nextDocumentNumber(
     [tenantId, documentType, year],
   );
   const rows = await connection.query("SELECT LAST_INSERT_ID() AS n");
-  return `${prefix}-${year}-${String(rows[0].n).padStart(padding, "0")}`;
+  let nextValue = Number(rows[0].n);
+
+  if (documentType === "patient") {
+    const existing = await connection.query(
+      "SELECT patient_number FROM patients WHERE tenant_id = ? AND patient_number LIKE ?",
+      [tenantId, `${prefix}-${year}-%`],
+    );
+    const numberPattern = new RegExp(`^${prefix}-${year}-(\\d+)$`);
+    const highestExisting = existing.reduce((highest: number, row: { patient_number: string }) => {
+      const match = row.patient_number.match(numberPattern);
+      return match ? Math.max(highest, Number(match[1])) : highest;
+    }, 0);
+    nextValue = Math.max(nextValue, highestExisting + 1);
+
+    if (nextValue !== Number(rows[0].n)) {
+      await connection.query(
+        `UPDATE sequence_counters SET last_value = ?
+          WHERE tenant_id = ? AND document_type = ? AND document_year = ?`,
+        [nextValue, tenantId, documentType, year],
+      );
+    }
+  }
+
+  return `${prefix}-${year}-${String(nextValue).padStart(padding, "0")}`;
 }

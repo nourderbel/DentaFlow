@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const APPOINTMENT_STATUSES = [
-  "PENDING", "PLANNED", "CONFIRMED", "ARRIVED", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW",
+  "PENDING", "CONFIRMED", "ARRIVED", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW",
 ] as const;
 
 export const appointmentInputSchema = z.object({
